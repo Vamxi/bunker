@@ -12,10 +12,28 @@ func (t *State) parse(c rune) {
 		}
 	}
 	// TODO: update selection; see st.c:2450
+	if t.extendGrapheme(c) {
+		return
+	}
 
-	if t.mode&ModeWrap != 0 && t.cur.State&cursorWrapNext != 0 {
-		t.lines[t.cur.Y][t.cur.X].Mode |= attrWrap
+	width := runeCellWidth(c)
+	if width > t.cols {
+		c, width = '\uFFFD', 1
+	}
+	if t.mode&ModeWrap != 0 && (t.cur.State&cursorWrapNext != 0 || t.cur.X+width > t.cols) {
+		if t.cur.State&cursorWrapNext == 0 {
+			for x := t.cur.X; x < t.cols; x++ {
+				t.eraseWideAt(x, t.cur.Y)
+				t.eraseCell(x, t.cur.Y)
+				t.lines[t.cur.Y][x].Width = -2
+			}
+			t.markDirty(t.cur.Y)
+		}
+		t.lines[t.cur.Y][t.cols-1].Mode |= attrWrap
 		t.newline(true)
+	}
+	if t.cur.X+width > t.cols {
+		c, width = '\uFFFD', 1
 	}
 
 	if t.mode&ModeInsert != 0 && t.cur.X+1 < t.cols {
@@ -24,11 +42,14 @@ func (t *State) parse(c rune) {
 	}
 
 	t.setChar(c, &t.cur.Attr, t.cur.X, t.cur.Y)
-	if t.cur.X+1 < t.cols {
-		t.moveTo(t.cur.X+1, t.cur.Y)
+	t.clusterX, t.clusterY = t.cur.X, t.cur.Y
+	if t.cur.X+width < t.cols {
+		t.moveTo(t.cur.X+width, t.cur.Y)
 	} else {
+		t.cur.X = t.cols - 1
 		t.cur.State |= cursorWrapNext
 	}
+	t.clusterOpen = true
 }
 
 func (t *State) parseEsc(c rune) {
@@ -107,6 +128,12 @@ func (t *State) parseEscCSI(c rune) {
 func (t *State) parseEscStr(c rune) {
 	t.logf("%q", string(c))
 	switch c {
+	case 0x18, 0x1a:
+		t.state = t.parse
+		t.str.reset()
+		if t.graphics != nil {
+			t.graphics.Abort()
+		}
 	case '\033':
 		t.state = t.parseEscStrEnd
 	case '\a': // backwards compatiblity to xterm
@@ -118,6 +145,24 @@ func (t *State) parseEscStr(c rune) {
 }
 
 func (t *State) parseEscStrEnd(c rune) {
+	if t.str.graphics {
+		// Graphics payloads are opaque until ST/BEL. In particular, an
+		// embedded ESC [ must not turn corrupt image data into pane text.
+		switch c {
+		case '\\', '\a':
+			t.state = t.parse
+			t.handleSTR()
+		case 0x18, 0x1a:
+			t.handleControlCodes(c)
+		case '\x1b':
+			t.str.put('\x1b')
+		default:
+			t.str.put('\x1b')
+			t.str.put(c)
+			t.state = t.parseEscStr
+		}
+		return
+	}
 	if t.handleControlCodes(c) {
 		return
 	}
@@ -168,6 +213,7 @@ func (t *State) handleControlCodes(c rune) bool {
 	if !isControlCode(c) {
 		return false
 	}
+	t.clusterOpen = false
 	switch c {
 	// HT
 	case '\t':
@@ -197,6 +243,11 @@ func (t *State) handleControlCodes(c rune) bool {
 	// SUB, CAN
 	case 032, 030:
 		t.csi.reset()
+		t.str.reset()
+		t.state = t.parse
+		if t.graphics != nil {
+			t.graphics.Abort()
+		}
 	// ignore ENQ, NUL, XON, XOFF, DEL
 	case 005, 000, 021, 023, 0177:
 	default:

@@ -2,6 +2,7 @@ package vt10x
 
 import (
 	"bufio"
+	"bunk/internal/graphics"
 	"fmt"
 	"io"
 )
@@ -27,6 +28,10 @@ type View interface {
 
 	// Size returns the size of the virtual terminal.
 	Size() (cols, rows int)
+	// CellPixels reports the virtual raster resolution of each character cell.
+	CellPixels() (width, height int)
+	// GraphicsState clones reusable images for replay without duplicating pixels.
+	GraphicsState() *graphics.Decoder
 
 	// Resize changes the size of the virtual terminal.
 	Resize(cols, rows int)
@@ -45,8 +50,21 @@ type View interface {
 	// background color at position (x, y) relative to the top left of the terminal.
 	Cell(x, y int) Glyph
 
+	// RawCell returns a glyph without resolving dynamic colour overrides.
+	RawCell(x, y int) Glyph
+
+	// ImportGlyph translates a glyph's hyperlink ID from source to this view.
+	ImportGlyph(g Glyph, source View) Glyph
+
+	// ReplaceScreen installs reflowed cells while retaining modes, attributes,
+	// callbacks, colours, and saved state. source supplies hyperlink identities.
+	ReplaceScreen(cols, rows int, cells [][]Glyph, cursor Cursor, source View)
+
 	// Cursor returns the current position of the cursor.
 	Cursor() Cursor
+
+	// CursorPosition returns the cursor relative to the active origin for CPR.
+	CursorPosition() (x, y int)
 
 	// CursorVisible returns the visible state of the cursor.
 	CursorVisible() bool
@@ -58,8 +76,11 @@ type View interface {
 	Unlock()
 
 	// QueryPrivateMode returns the DECRQM status byte for a DEC private mode.
-	// '1' = set, '2' = reset, '4' = not recognized.
+	// '1' = set, '2' = reset, '0' = not recognized.
 	QueryPrivateMode(mode int) byte
+
+	// StatusString returns a DECRQSS response for an implemented setting.
+	StatusString(setting string) string
 
 	// ColorOverride returns the current dynamic-colour override for c, if one
 	// has been set via OSC 10/11/12 or similar colour-control sequences.
@@ -91,7 +112,35 @@ type TerminalInfo struct {
 	// sbClearCb is called when the application requests scrollback erasure:
 	// ED 3 (CSI 3 J, the xterm E3 extension sent by clear(1)) or RIS
 	// (ESC c, sent by reset(1)).
-	sbClearCb func()
+	sbClearCb             func()
+	graphics              *graphics.Decoder
+	graphicsReply         func([]byte)
+	cellWidth, cellHeight int
+	graphicsRows          int
+}
+
+// WithGraphicsReply routes graphics acknowledgements independently of ordinary
+// terminal queries. The callback runs synchronously while the state is locked.
+func WithGraphicsReply(fn func([]byte)) TerminalOption {
+	return func(info *TerminalInfo) { info.graphicsReply = fn }
+}
+
+// WithGraphicsState installs an isolated decoder snapshot for history replay.
+func WithGraphicsState(decoder *graphics.Decoder) TerminalOption {
+	return func(info *TerminalInfo) { info.graphics = decoder.Clone() }
+}
+
+// WithCellPixels sets the virtual raster size used for image placement.
+func WithCellPixels(width, height int) TerminalOption {
+	return func(info *TerminalInfo) {
+		info.cellWidth, info.cellHeight = max(1, min(width, 256)), max(2, min(height, 256))
+	}
+}
+
+// WithGraphicsViewportRows keeps percentage-sized images relative to the pane,
+// not the much taller scratch grid used to replay history during reflow.
+func WithGraphicsViewportRows(rows int) TerminalOption {
+	return func(info *TerminalInfo) { info.graphicsRows = max(1, rows) }
 }
 
 func WithWriter(w io.Writer) TerminalOption {
@@ -132,9 +181,11 @@ func WithScrollbackClearCallback(fn func()) TerminalOption {
 // New returns a new virtual terminal emulator.
 func New(opts ...TerminalOption) Terminal {
 	info := TerminalInfo{
-		w:    io.Discard,
-		cols: 80,
-		rows: 24,
+		w:          io.Discard,
+		cols:       80,
+		rows:       24,
+		cellWidth:  8,
+		cellHeight: 16,
 	}
 	for _, opt := range opts {
 		opt(&info)

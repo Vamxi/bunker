@@ -29,6 +29,12 @@ printf '%s\n' "$r"
 expect "Bunk typically reports ^[[>0;279;0c"
 diagnose "If malformed, inspect DA2 handling in pane query responses."
 
+section "DA3, DSR, and DECRQSS"
+printf '  DA3: %s\n' "$(query_terminal "${CSI}=c")"
+printf '  DSR: %s\n' "$(query_terminal "${CSI}5n")"
+printf '  SGR setting: %s\n' "$(query_terminal "${DCS}\$qm${ST}")"
+expect "DA3 returns DCS !|00000000 ST; DSR returns CSI 0n; the SGR setting returns DCS 1\$r ... m ST."
+
 section "XTVERSION"
 printf "  Query:    ^[[>0q\n"
 printf "  Response: "
@@ -43,7 +49,7 @@ printf "  Response: "
 r=$(query_terminal "${CSI}6n")
 printf '%s\n' "$r"
 expect "A row/col reply such as ^[[12;1R"
-diagnose "If empty in normal mode, inspect CPR gating."
+diagnose "If empty in either screen mode, inspect CPR query handling."
 
 section "XTGETTCAP"
 printf "  Query Smulx:  DCS +q 536d756c78 ST\n"
@@ -81,14 +87,14 @@ printf "  Response: "
 r=$(query_terminal_alt "${OSC}10;?${ST}")
 printf '%s\n' "$r"
 expect "OSC 10;rgb:xxxx/xxxx/xxxx ST"
-diagnose "If empty only in bunk, inspect alt-screen gating, theme defaults, and OSC query ordering."
+diagnose "If empty only in bunk, inspect theme defaults and OSC query ordering."
 
 printf "  Query OSC 11 in alt-screen: CSI ?1049h, OSC 11;? ST, CSI ?1049l\n"
 printf "  Response: "
 r=$(query_terminal_alt "${OSC}11;?${ST}")
 printf '%s\n' "$r"
 expect "OSC 11;rgb:xxxx/xxxx/xxxx ST; empty is acceptable only when defaults are genuinely unknown"
-diagnose "If normal-mode apps show garbage instead, inspect OSC suppression outside alt-screen."
+diagnose "Both normal and alternate screens should answer with the same current colour."
 
 printf "  Query OSC 12 in alt-screen: CSI ?1049h, OSC 12;? ST, CSI ?1049l\n"
 printf "  Response: "

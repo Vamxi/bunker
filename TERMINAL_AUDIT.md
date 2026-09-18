@@ -1,6 +1,6 @@
 # Bunk Terminal Feature Audit
 
-Date: 2026-03-12 (updated 2026-03-21)
+Date: 2026-03-12 (updated 2026-09-18)
 
 ## Legend
 - **OK** — fully handled
@@ -24,8 +24,8 @@ Date: 2026-03-12 (updated 2026-03-21)
 | 7 | Reverse | **FIXED** | Was broken for default-color cells — vtColor mapped both DefaultFG and DefaultBG to the positional `def` param, undoing vt10x's FG/BG swap. Claude/Copilot cursor (reverse-video space) was invisible |
 | 8 | Hidden/Invisible | OK | AttrInvisible bit added; rendered as space character |
 | 9 | Strikethrough | OK | AttrStrikethrough bit added; tcell StrikeThrough(true) applied |
-| 21 | Double underline | **MISSING** | Rare, some rich-text TUIs |
-| 53 | Overline | **MISSING** | Parsed and stored (AttrOverline bit); reflow-correct; not rendered — tcell has no overline attribute |
+| 21 | Double underline | OK | Same style as SGR 4:2; does not clear bold/dim |
+| 53 | Overline | OK | Stored through reflow and emitted as SGR 53 by the pinned tcell fork; SGR 55/0 clear it. Host must support overline |
 | 58;5;N | Colored underline (256) | OK | attrHasULColor flag + UL Color field; vtColor mapping; tcell style.Underline(color) |
 | 58;2;R;G;B | Colored underline (RGB) | OK | Same |
 | 30-37, 90-97 | ANSI FG colors | OK | |
@@ -46,14 +46,15 @@ Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazy
 | 0/1/2 | Window title | OK | vt10x handles; bunk supplements with process/cwd |
 | 4 | Set palette color | OK | vt10x handles |
 | 7 | CWD notification | OK | Forwarded to host |
-| 8 | Hyperlinks | OK | Forwarded to host |
-| 10/11/12 | Query/set fg/bg/cursor color | **PARTIAL** | Queries are answered in-stream from bunk's current dynamic colour state. Replies are gated to alt-screen mode to avoid leaking into normal-mode apps. In `theme="terminal"` mode bunk now probes the outer terminal's OSC 10/11/12 defaults at startup and uses them when available; replies are still suppressed if the host terminal does not answer or the cursor colour is genuinely unknown. Set form (e.g. `\x1b]11;#0D1117`) is honoured per pane: vt10x resolves DefaultBG/FG through the override. Fixed: a colour change now forces a full repaint (`State.ColorGen`) so blank rows already painted with the old default are updated too — otherwise the screen showed horizontal bands of mismatched background (e.g. Copilot CLI welcome screen) |
+| 8 | Hyperlinks | OK | Stored on glyphs and emitted inline with text; hyperlink identities survive reflow |
+| 10/11/12 | Query/set fg/bg/cursor color | OK (host-dependent) | In-stream replies in both screen modes, including SSH/mosh. FG/BG changes repaint existing cells; cursor colour follows the active pane via tcell. Terminal-theme defaults are probed at startup; a genuinely unknown default is not fabricated |
 | 52 | Clipboard | OK | Forwarded to host |
 | 104 | Reset palette color | OK | vt10x handles |
-| 110/111/112 | Reset fg/bg/cursor color | **PARTIAL** | Clears bunk's dynamic fg/bg/cursor overrides. Cursor-colour state is tracked for query/reset semantics, but bunk does not visibly render a separate cursor colour |
+| 110/111/112 | Reset fg/bg/cursor color | OK | Clears dynamic overrides, repaints FG/BG, and restores the pane's cursor-colour baseline (or the host default when unknown) |
 | 133 | Shell integration/prompt marking | OK | Forwarded to host so semantic prompt integration and jump-to-prompt can work when the outer terminal supports it |
 
-Highest impact: Dynamic colour queries/resets are implemented and `theme="terminal"` now probes host defaults at startup, but compliance is still partial when the outer terminal does not support OSC 10/11/12 or does not expose a distinct cursor colour.
+Host limitation: an outer terminal that does not disclose a default colour cannot
+be queried accurately for that value. Explicit pane colour overrides remain queryable.
 
 ---
 
@@ -61,18 +62,18 @@ Highest impact: Dynamic colour queries/resets are implemented and `theme="termin
 
 | Mode | Feature | Status | Notes |
 |------|---------|--------|-------|
-| 1 | DECCKM (cursor keys app mode) | OK | |
+| 1 | DECCKM (cursor keys app mode) | OK | Unmodified arrows/Home/End use SS3 in application mode; modified keys retain CSI modifier encoding |
 | 7 | DECAWM (auto-wrap) | OK | |
-| 12 | Cursor blink | **MISSING** | vt10x logs "not implemented" |
+| 12 | Cursor blink | OK | Toggles blinking while retaining block/underline/bar shape; queryable with DECRQM |
 | 25 | DECTCEM (cursor visible) | OK | |
 | 47/1047 | Alt screen | OK | |
-| 1000-1003 | Mouse modes | OK | |
-| 1004 | Focus events | OK | |
+| 1000-1003 | Mouse modes | OK | Release events are forwarded in 1000/1002 as well as 1003 |
+| 1004 | Focus events | OK | Pane navigation and outer-terminal focus changes are forwarded when enabled |
 | 1006 | SGR mouse | OK | |
 | 1049 | Alt screen + save cursor | OK | |
 | 2004 | Bracketed paste | OK | |
-| 2026 | Synchronized updates | OK | |
-| 2027 | Grapheme clustering | **MISSING** | Multi-codepoint emoji rendering |
+| 2026 | Synchronized updates | OK | Suppresses only the updating pane; a one-second timeout releases abandoned updates |
+| 2027 | Grapheme clustering | OK | Enabled by default; incremental Unicode grapheme assembly with bounded cell storage and legacy per-codepoint mode on reset |
 
 ---
 
@@ -82,13 +83,13 @@ Highest impact: Dynamic colour queries/resets are implemented and `theme="termin
 |-------|---------|--------|-------|
 | DA1 (CSI c) | Primary device attributes | OK | Responds as VT220 |
 | DA2 (CSI > c) | Secondary device attributes | OK | Responds as xterm 279 |
-| DA3 (CSI = c) | Tertiary device attributes | **MISSING** | Rare, low impact |
-| CPR (CSI 6 n) | Cursor position report | OK | |
-| DSR (CSI 5 n) | Device status report | OK | |
-| DECRQM (CSI ? Ps $ p) | Request mode | OK | Responds for modes 2026, 2004, 1004, 1049 |
+| DA3 (CSI = c) | Tertiary device attributes | OK | DCS !\|00000000 ST (no hardware serial number) |
+| CPR (CSI 6 n / CSI ? 6 n) | Cursor position report | OK | Both screen modes; respects origin mode and scroll margins |
+| DSR (CSI 5 n) | Device status report | OK | CSI 0 n, including remote panes |
+| DECRQM (CSI ? Ps $ p) | Request mode | OK | Tracked modes include 12/2027; unknown modes return 0, not the permanently-reset status 4 |
 | XTVERSION (CSI > 0 q) | Terminal version | OK | Responds with DCS >|VTE(8203) ST; VTE_VERSION=8203 set in pane env; used by Claude Code, Neovim, WezTerm for feature detection |
 | XTGETTCAP (DCS + q) | Terminfo capability query | OK | Responds to Smulx/Setulc/Su (found with hex-encoded value); all others get "not found"; eliminates startup latency in apps that query capabilities |
-| DECRQSS | Request setting | **MISSING** | Low impact |
+| DECRQSS | Request setting | OK | SGR (`m`), scroll margins (`r`), and cursor style (`SP q`); unsupported settings receive DCS 0 $ r ST |
 
 Highest impact: XTVERSION (feature detection by newer apps).
 
@@ -109,7 +110,7 @@ Highest impact: XTVERSION (feature detection by newer apps).
 | Home/End/PgUp/PgDn/Ins/Del | OK | All modifiers forwarded as `\x1b[<code>;<mod>~` / `\x1b[1;<mod>H/F`; Shift+PgUp/PgDn consumed by default for scrollback (config-dependent) |
 | Modified arrows (Ctrl+Up etc) | OK | Forwarded as `\x1b[1;<mod>A/B/C/D`; Alt+arrows consumed by default for pane nav (config-dependent) |
 | Modified Home/End/etc | OK | Ctrl+Home, Shift+End, Ctrl+Delete etc. forwarded with xterm modifier parameter |
-| Keypad keys | **MISSING** | Numpad Enter, keypad digits in app keypad mode |
+| Keypad keys | OK (host-dependent) | Keypad identity survives SS3/Kitty input; digits/operators/Enter use application-keypad SS3 or CSI-u. Hosts sending ordinary digit/Enter bytes cannot identify their physical origin |
 
 > **Note:** Any key bound to a bunk action in the user's config is intercepted and not forwarded to the PTY. Default consumed keys: F1 (split), Alt+F1 (split-context), F12 (zoom), Alt+arrows (pane nav), Shift+PgUp/PgDn (scrollback), Ctrl+C (copy/forward), Ctrl+V (paste), Ctrl+Q (quit), Ctrl+F (search), Ctrl+N (search-next). All of these are user-remappable.
 
@@ -121,11 +122,26 @@ Highest impact: SGR 58 (underline colour) for neovim LSP diagnostics colour-codi
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Sixel | **MISSING** | Used by chafa, lsix |
-| Kitty graphics | **MISSING** | Used by kitty icat, ranger |
-| iTerm2 inline images | **MISSING** | Used by imgcat, viu |
+| Sixel | OK (cell-rendered subset) | Static raster data, repeats, RGB/HLS palettes, transparency; square source pixels |
+| Kitty graphics | OK (cell-rendered subset) | Direct RGB/RGBA/PNG, zlib, chunking, query replies, cached placement, cropping/scaling, cursor policy, ID/coordinate deletion |
+| iTerm2 inline images | OK (cell-rendered subset) | Inline PNG/JPEG/GIF first frame; multipart uploads; cell/pixel/percentage sizing and aspect preservation |
 
-N/A in practice for cell-based multiplexer without passthrough support.
+Images are downsampled into RGB half-block cells, not native pixels. They clip to
+the pane, scroll into history, survive resize, and are overwritten/erased like
+text. Transparent samples blend against the cell background; fully transparent
+cells leave existing text intact. Deletion removes visible image cells without
+restoring covered text or editing archived scrollback. Layering, animation,
+Unicode placeholders, relative placements, non-square SIXEL pixel aspects, and
+native-pixel fidelity are outside this rendering mode. Unsupported Kitty actions
+receive an error (subject to `q`); file/shared-memory transfers are rejected.
+iTerm2 downloads are never written to disk. Explicit protocol selection may be
+needed in clients that rely on host-brand environment variables.
+
+Bounds: 8 MiB encoded transfer, 4096 pixels per axis, 4 million source pixels,
+256 Ki output cells, and a 32 MiB / 32-image Kitty cache. Cached images are evicted
+oldest-first; a later placement of an evicted ID returns `ENOENT`. Replay history
+is bounded too: images whose upload/placement has aged out cannot be reconstructed.
+CSI 14/16/18 and PTY pixel sizes describe the same virtual cell geometry.
 
 ---
 
@@ -134,9 +150,9 @@ N/A in practice for cell-based multiplexer without passthrough support.
 | Feature | Status | Notes |
 |---------|--------|-------|
 | UTF-8 | OK | Boundary detection prevents split-rune corruption |
-| CJK double-width | **FIXED** | displayCol tracking in renderPane decouples vt10x column from screen column. Hardware cursor position also mapped through `cursorDisplayX` so it lands on the painted column — otherwise the cursor sat one column left per wide char ahead of it (e.g. after pasting an image into Copilot, whose "[📷 …]" chip contains a double-width emoji) |
-| Combining characters | **PARTIAL** | vt10x stores one rune per cell |
-| Emoji (multi-codepoint) | **MISSING** | No grapheme clustering (mode 2027) |
+| CJK double-width | **FIXED** | vt10x tracks display-cell widths and continuations, including right-edge wrapping and editing. Rendering, cursor positions, copy, search, and reflow use those same coordinates |
+| Combining characters | OK | Immutable grapheme suffix retained in lead cells, including copy/search/reflow |
+| Emoji (multi-codepoint) | OK | ZWJ families, flags, modifiers, variation selectors, and keycaps; widths and continuation cells agree with tcell. Visual shaping still requires a capable host/font |
 
 ---
 
@@ -161,17 +177,43 @@ N/A in practice for cell-based multiplexer without passthrough support.
 
 ## Priority Implementation Plan
 
-### Tier 1 — High impact, affects common apps daily
+### Reliability fixes (2026-09-17)
 
-All high-impact items have been implemented. Remaining gaps are low-priority.
+- Primary-screen resize retains terminal modes, cursor style, active attributes,
+  dynamic colours, hyperlinks, and scrollback-clear callbacks.
+- Replay sizing counts hard line breaks as well as wrapping, preserving short-line history.
+- PTY framing caps ordinary controls at 64 KiB (recognized graphics at 8 MiB) and discards oversized
+  sequences through their terminator; incomplete input no longer grows unbounded.
+- Foreground polling retains Kitty negotiation made by the current process;
+  only negotiation owned by a departed foreground process is cleared.
+- Repeated transient line clears expire independently and cannot leave rendering suppressed.
 
-### Tier 2 — Medium impact, cosmetic or edge-case
+### Protocol/text fixes (2026-09-18)
 
-1. **SGR 21 double underline** — stored as underline style 2 but tcell doesn't distinguish it visually
-2. **SGR 53 overline display** — parsed/stored; blocked on tcell adding AttrOverline (upstream request needed)
+- Implemented SGR 21/53 display, cursor blink/colour, DA3, and DECRQSS.
+- Corrected DSR, alternate-screen CPR, origin-relative CPR, remote query replies,
+  and unknown-mode DECRQM status. Colour replies no longer depend on alt-screen.
+- Added application cursor/keypad input and host focus-event forwarding.
+- Added bounded grapheme storage across chunk boundaries, wide-cluster wrapping,
+  rendering, selection, search, and reflow.
+- Corrected Kitty set-flags add/remove operations, capped negotiation depth,
+  and prevented string payloads from being interpreted as keyboard negotiation.
+- Bundled the existing tcell v2.13.9 with small overline/keypad/keycap patches;
+  its regression tests are included in `make test`.
 
-### Tier 3 — Nice to have
+### Graphics fixes (2026-09-18)
 
-3. Grapheme clustering (mode 2027) — wide-char clusters
-4. Graphics protocol passthrough (Sixel / kitty)
-5. Keypad keys (numpad in app keypad mode)
+- Implemented the agreed portable, cell-rendered static subset of all three
+  graphics protocols; no protocol remains entirely missing.
+- Added bounded decoding/transfer/cache limits, malformed-input recovery,
+  pane-local clipping, alpha blending, placement deletion, and replay support.
+- Added `terminal_features.sh graphics`, simulation-screen and PTY-path tests,
+  and decoder fuzz coverage. Native graphics and the extensions excluded above
+  are not claimed as implemented.
+
+Protocol references: [xterm control sequences](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html),
+[Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/),
+[Unicode grapheme segmentation](https://www.unicode.org/reports/tr29/).
+Graphics references: [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/),
+[iTerm2 inline images](https://iterm2.com/documentation-images.html),
+[DEC VT300 reference](https://vt100.net/dec/ek-vt3xx-hr-002.pdf).

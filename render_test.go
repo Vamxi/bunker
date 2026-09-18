@@ -1176,9 +1176,8 @@ func TestTcellColorToXParse_Default_Unknown(t *testing.T) {
 
 // TestCursorDisplayX_WideChars is the regression test for the cursor landing one
 // column too far left after a wide character.  Pasting an image into Copilot
-// inserts a "[📷 …]" chip; the 📷 emoji is double-width, so vt10x's cursor column
-// trails the real screen column by one per wide char.  cursorDisplayX must map
-// the vt10x column back to the painted screen column.
+// inserts a "[📷 …]" chip; the emulator and renderer must agree on the two
+// display cells occupied by the emoji.
 func TestCursorDisplayX_WideChars(t *testing.T) {
 	const w, h = 40, 3
 	term := vt10x.New(vt10x.WithSize(w-1, h))
@@ -1192,10 +1191,9 @@ func TestCursorDisplayX_WideChars(t *testing.T) {
 
 	cur := term.Cursor()
 	got := cursorDisplayX(p, cur)
-	// 8 runes precede the cursor ("❯ [📷 ab]" = ❯,SP,[,📷,SP,a,b,] => cursor at
-	// vt10x col 8); the 📷 occupies 2 screen cols, so the screen column is 9.
-	if cur.X != 8 {
-		t.Fatalf("precondition: vt10x cursor col = %d, want 8", cur.X)
+	// Eight runes occupy nine display cells because the emoji is wide.
+	if cur.X != 9 {
+		t.Fatalf("vt10x cursor col = %d, want 9 display cells", cur.X)
 	}
 	if got != 9 {
 		t.Errorf("cursorDisplayX = %d, want 9 (off-by-one left from wide emoji)", got)

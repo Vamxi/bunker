@@ -127,6 +127,8 @@ func (app *App) runSearchScan() {
 	sbCount := p.sb.count
 	totalRows := sbCount + rows
 	snapshot := make([][]rune, totalRows)
+	columns := make([][]int, totalRows)
+	ends := make([][]int, totalRows)
 	for vRow := 0; vRow < totalRows; vRow++ {
 		var cells []vt10x.Glyph
 		if vRow < sbCount {
@@ -134,18 +136,38 @@ func (app *App) runSearchScan() {
 		} else {
 			cells = captureRow(p.term, vRow-sbCount, cols)
 		}
-		row := make([]rune, cols)
+		row := make([]rune, 0, cols)
+		positions := make([]int, 0, cols+1)
+		endColumns := make([]int, 0, cols)
 		for i := 0; i < cols; i++ {
 			var ch rune
 			if i < len(cells) {
+				if cells[i].Width < 0 {
+					continue
+				}
 				ch = cells[i].Char
 			}
 			if ch == 0 {
 				ch = ' '
 			}
-			row[i] = unicode.ToLower(ch)
+			row = append(row, unicode.ToLower(ch))
+			positions = append(positions, i)
+			width := 1
+			if i < len(cells) {
+				width = max(1, int(cells[i].Width))
+			}
+			endColumns = append(endColumns, i+width)
+			if i < len(cells) {
+				for _, c := range cells[i].Combining {
+					row = append(row, unicode.ToLower(c))
+					positions = append(positions, i)
+					endColumns = append(endColumns, i+width)
+				}
+			}
 		}
 		snapshot[vRow] = row
+		columns[vRow] = append(positions, cols)
+		ends[vRow] = endColumns
 	}
 	p.mu.Unlock()
 
@@ -162,8 +184,8 @@ func (app *App) runSearchScan() {
 			if match {
 				matches = append(matches, searchMatch{
 					vRow:   vRow,
-					col:    offset,
-					length: lqLen,
+					col:    columns[vRow][offset],
+					length: ends[vRow][offset+lqLen-1] - columns[vRow][offset],
 				})
 				offset += lqLen - 1 // skip to end of match (loop adds 1)
 			}

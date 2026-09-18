@@ -1,9 +1,13 @@
 package vt10x
 
 import (
+	"bunk/internal/graphics"
 	"io"
 	"log"
+	"strings"
 	"sync"
+
+	"github.com/rivo/uniseg"
 )
 
 const (
@@ -29,7 +33,7 @@ const (
 	attrUnderlineStyleBit1 // 2048
 	attrUnderlineStyleBit2 // 4096
 	attrHasULColor         // 8192: SGR 58 was explicitly set; UL field is valid
-	attrOverline           // 16384: SGR 53 — overline (stored but not rendered; tcell has no overline attr)
+	attrOverline           // 16384: SGR 53 — overline
 )
 
 // attrUnderlineStyleMask covers all three underline-style bits.
@@ -88,6 +92,7 @@ const (
 	ModeMouseMany
 	ModeSetPaste  // DECSET 2004 — bracketed paste mode
 	ModeSync      // DECSET 2026 — synchronized update
+	ModeGrapheme  // DECSET 2027 — extended grapheme cluster widths
 	ModeMouseMask = ModeMouseButton | ModeMouseMotion | ModeMouseX10 | ModeMouseMany
 )
 
@@ -101,11 +106,14 @@ const (
 )
 
 type Glyph struct {
-	Char   rune
-	Mode   int16
-	FG, BG Color
-	UL     Color  // SGR 58 underline color; DefaultUL means inherit from FG
-	Link   uint16 // OSC 8 hyperlink ID; 0 = no link, otherwise index into State.links (1-based)
+	Char      rune
+	Combining string // immutable suffix of the grapheme, shared safely by snapshots
+	Width     int8   // 2: wide, -1: continuation, -2: wrap padding, 0/1: narrow
+	Mode      int16
+	FG, BG    Color
+	UL        Color      // SGR 58 underline color; DefaultUL means inherit from FG
+	Link      uint16     // OSC 8 hyperlink ID; 0 = no link, otherwise index into State.links (1-based)
+	Image     *ImageCell // immutable cell-local raster data, shared by scrollback snapshots
 }
 
 type line []Glyph
@@ -135,24 +143,26 @@ type parseState func(c rune)
 type State struct {
 	DebugLogger *log.Logger
 
-	w             io.Writer
-	mu            sync.Mutex
-	changed       ChangeFlag
-	cols, rows    int
-	lines         []line
-	altLines      []line
-	dirty         []bool // line dirtiness
-	anydirty      bool
-	cur, curSaved Cursor
-	top, bottom   int // scroll limits
-	mode          ModeFlag
-	state         parseState
-	str           strEscape
-	csi           csiEscape
-	numlock       bool
-	tabs          []bool
-	title         string
-	colorOverride map[Color]Color
+	w                  io.Writer
+	mu                 sync.Mutex
+	changed            ChangeFlag
+	cols, rows         int
+	lines              []line
+	altLines           []line
+	dirty              []bool // line dirtiness
+	anydirty           bool
+	cur, curSaved      Cursor
+	top, bottom        int // scroll limits
+	mode               ModeFlag
+	state              parseState
+	clusterOpen        bool
+	clusterX, clusterY int
+	str                strEscape
+	csi                csiEscape
+	numlock            bool
+	tabs               []bool
+	title              string
+	colorOverride      map[Color]Color
 	// colorGen bumps every time a dynamic-colour override changes (OSC
 	// 10/11/12/4 set or reset).  Because Cell() resolves DefaultBG/FG through
 	// colorOverride, a change repaints the appearance of EVERY cell — including
@@ -172,8 +182,9 @@ type State struct {
 	// Capped at 0xFFFF (uint16 max) per pane; past that new URLs degrade
 	// silently to "no link", which is the right failure mode (rendering
 	// stays correct, just no clickable link for the overflow URLs).
-	links   []string
-	linkIDs map[string]uint16
+	links     []string
+	linkIDs   map[string]uint16
+	linkBytes int
 	// scrollRowCb, if non-nil, is called once per row that scrolls off the
 	// top of the primary screen (orig == 0 in scrollUp).  It fires before
 	// the row's backing storage is cleared, so the content is still intact.
@@ -183,7 +194,11 @@ type State struct {
 	// scrollback erasure via ED 3 (CSI 3 J) or RIS (ESC c).  Scrollback
 	// lives outside this State (which only holds the visible grid), so
 	// erasure is delegated to the owner.  Not fired by init-time reset().
-	sbClearCb func()
+	sbClearCb             func()
+	graphics              *graphics.Decoder
+	graphicsReply         func([]byte)
+	cellWidth, cellHeight int
+	graphicsRows          int // replay viewport height; zero uses the live grid
 }
 
 func newState(w io.Writer) *State {
@@ -240,9 +255,65 @@ func (t *State) Cell(x, y int) Glyph {
 	return cell
 }
 
+// RawCell returns a glyph without resolving dynamic colour overrides.
+func (t *State) RawCell(x, y int) Glyph { return t.lines[y][x] }
+
+// ImportGlyph translates hyperlink identities. The caller must synchronize
+// access to both terminals, as for Cell and Link.
+func (t *State) ImportGlyph(g Glyph, source View) Glyph {
+	if g.Link != 0 && source != nil {
+		g.Link = t.internLink(source.Link(g.Link))
+	}
+	return g
+}
+
+// ReplaceScreen installs reflowed cells without resetting terminal state.
+// source supplies the hyperlink table used by cells. The caller must prevent
+// concurrent access to source, just as for Cell and Link.
+func (t *State) ReplaceScreen(cols, rows int, cells [][]Glyph, cursor Cursor, source View) {
+	if cols < 1 || rows < 1 {
+		return
+	}
+	t.lock()
+	defer t.unlock()
+	top, bottom, oldRows := t.top, t.bottom, t.rows
+	t.resize(cols, rows)
+	if bottom != oldRows-1 || top != 0 {
+		t.setScroll(clamp(top, 0, rows-1), clamp(bottom, 0, rows-1))
+	}
+	blank := t.defaultCursor().Attr
+	blank.Char = ' '
+	for y := range t.lines {
+		for x := range t.lines[y] {
+			g := blank
+			if y < len(cells) && x < len(cells[y]) {
+				g = cells[y][x]
+				if g.Char == 0 && g.Width >= 0 {
+					g = blank
+				}
+				g = t.ImportGlyph(g, source)
+			}
+			t.lines[y][x] = g
+		}
+		t.repairWideRow(y)
+	}
+	t.cur.X, t.cur.Y = clamp(cursor.X, 0, cols-1), clamp(cursor.Y, 0, rows-1)
+	t.cur.State = t.cur.State&^cursorWrapNext | cursor.State&cursorWrapNext
+	t.dirtyAll()
+}
+
 // Cursor returns the current position of the cursor.
 func (t *State) Cursor() Cursor {
 	return t.cur
+}
+
+// CursorPosition returns the cursor position relative to the active origin.
+func (t *State) CursorPosition() (x, y int) {
+	x, y = t.cur.X, t.cur.Y
+	if t.cur.State&cursorOrigin != 0 {
+		y -= t.top
+	}
+	return x, y
 }
 
 // CursorVisible returns the visible state of the cursor.
@@ -256,9 +327,21 @@ func (t *State) Mode() ModeFlag {
 }
 
 // QueryPrivateMode returns the DECRQM status byte for a DEC private mode number.
-// Return values follow the DECRQM spec: '1' = set, '2' = reset, '4' = not recognized.
+// Return values follow DECRQM: '0' = unknown, '1' = set, '2' = reset.
 // This is used to generate \x1b[?N;S$y responses without hardcoding them in the host.
 func (t *State) QueryPrivateMode(mode int) byte {
+	if mode == 12 {
+		if t.cur.Shape == 0 || t.cur.Shape%2 == 1 {
+			return '1'
+		}
+		return '2'
+	}
+	if mode == 6 {
+		if t.cur.State&cursorOrigin != 0 {
+			return '1'
+		}
+		return '2'
+	}
 	// Mode 25 (DECTCEM) is inverted: "mode 25 set" means cursor visible, but
 	// internally we track ModeHide (cursor hidden). Invert before returning.
 	if mode == 25 {
@@ -269,7 +352,7 @@ func (t *State) QueryPrivateMode(mode int) byte {
 	}
 	flag, ok := t.privateModeFlag(mode)
 	if !ok {
-		return '4' // not recognized
+		return '0' // not recognized
 	}
 	if t.mode&flag != 0 {
 		return '1' // set
@@ -311,12 +394,18 @@ func (t *State) privateModeFlag(mode int) (ModeFlag, bool) {
 		return ModeFocus, true
 	case 1006:
 		return ModeMouseSgr, true
-	case 1049:
+	case 47, 1047, 1049:
 		return ModeAltScreen, true
 	case 2004:
 		return ModeSetPaste, true
 	case 2026:
 		return ModeSync, true
+	case 2027:
+		return ModeGrapheme, true
+	case 9:
+		return ModeMouseX10, true
+	case 66:
+		return ModeAppKeypad, true
 	default:
 		return 0, false
 	}
@@ -349,14 +438,20 @@ func (t *State) internLink(url string) uint16 {
 	if id, ok := t.linkIDs[url]; ok {
 		return id
 	}
-	if len(t.links) >= 0xFFFF {
+	// The graphics-capable string parser also accepts longer OSC strings.
+	// Bound total URL bytes independently of the number of interned IDs.
+	if len(t.links) >= 0xFFFF || len(url) > maxLinkBytes-t.linkBytes {
 		return 0
 	}
+	url = strings.Clone(url) // do not retain a larger OSC header backing string
+	t.linkBytes += len(url)
 	t.links = append(t.links, url)
 	id := uint16(len(t.links))
 	t.linkIDs[url] = id
 	return id
 }
+
+const maxLinkBytes = 16 << 20
 
 /*
 // ChangeMask returns a bitfield of changes that have occured by VT.
@@ -469,8 +564,18 @@ func (t *State) setChar(c rune, attr *Glyph, x, y int) {
 	}
 	t.changed |= ChangedScreen
 	t.markDirty(y)
+	width := runeCellWidth(c)
+	if x+width > t.cols {
+		c, width = '\uFFFD', 1
+	}
+	t.eraseWideAt(x, y)
+	if width == 2 {
+		t.eraseWideAt(x+1, y)
+	}
 	t.lines[y][x] = *attr
 	t.lines[y][x].Char = c
+	t.lines[y][x].Combining = ""
+	t.lines[y][x].Width = int8(width)
 	//if t.options.BrightBold && attr.Mode&attrBold != 0 && attr.FG < 8 {
 	if attr.Mode&attrBold != 0 && attr.FG < 8 {
 		t.lines[y][x].FG = attr.FG + 8
@@ -478,6 +583,54 @@ func (t *State) setChar(c rune, attr *Glyph, x, y int) {
 	if attr.Mode&attrReverse != 0 {
 		t.lines[y][x].FG = attr.BG
 		t.lines[y][x].BG = attr.FG
+	}
+	if width == 2 {
+		t.lines[y][x+1] = t.lines[y][x]
+		t.lines[y][x+1].Char = 0
+		t.lines[y][x+1].Width = -1
+	}
+}
+
+func runeCellWidth(c rune) int {
+	if c < 0x80 {
+		return 1
+	}
+	return max(1, uniseg.StringWidth(string(c)))
+}
+
+func (t *State) eraseCell(x, y int) {
+	g := t.cur.Attr
+	g.Char, g.Width, g.Link = ' ', 1, 0
+	g.Mode, g.Combining, g.UL = 0, "", DefaultUL
+	g.Image = nil
+	t.lines[y][x] = g
+}
+
+func (t *State) eraseWideAt(x, y int) {
+	switch t.lines[y][x].Width {
+	case -1:
+		if x > 0 {
+			t.eraseCell(x-1, y)
+		}
+	case 2:
+		if x+1 < t.cols {
+			t.eraseCell(x+1, y)
+		}
+	}
+}
+
+func (t *State) repairWideRow(y int) {
+	for x := 0; x < t.cols; x++ {
+		switch t.lines[y][x].Width {
+		case 2:
+			if x+1 < t.cols && t.lines[y][x+1].Width == -1 {
+				x++
+			} else {
+				t.eraseCell(x, y)
+			}
+		case -1:
+			t.eraseCell(x, y)
+		}
 	}
 }
 
@@ -490,6 +643,7 @@ func (t *State) defaultCursor() Cursor {
 }
 
 func (t *State) reset() {
+	t.graphics = nil
 	t.cur = t.defaultCursor()
 	t.saveCursor()
 	for i := range t.tabs {
@@ -500,13 +654,15 @@ func (t *State) reset() {
 	}
 	t.top = 0
 	t.bottom = t.rows - 1
-	t.mode = ModeWrap
+	t.mode = ModeWrap | ModeGrapheme
+	t.clusterOpen = false
 	t.clear(0, 0, t.cols-1, t.rows-1)
 	t.moveTo(0, 0)
 }
 
 // TODO: definitely can improve allocs
 func (t *State) resize(cols, rows int) bool {
+	t.clusterOpen = false
 	if cols == t.cols && rows == t.rows {
 		return false
 	}
@@ -543,8 +699,8 @@ func (t *State) resize(cols, rows int) bool {
 		for i > 0 && !tabs[i] {
 			i--
 		}
-		for i += tabspaces; i < len(tabs); i += tabspaces {
-			tabs[i] = true
+		for i += tabspaces; i < len(t.tabs); i += tabspaces {
+			t.tabs[i] = true
 		}
 	}
 
@@ -558,6 +714,9 @@ func (t *State) resize(cols, rows int) bool {
 		}
 		if cols > 0 && minrows < rows {
 			t.clear(0, minrows, cols-1, rows-1)
+		}
+		for y := range t.lines {
+			t.repairWideRow(y)
 		}
 		t.swapScreen()
 	}
@@ -578,17 +737,15 @@ func (t *State) clear(x0, y0, x1, y1 int) {
 	t.changed |= ChangedScreen
 	for y := y0; y <= y1; y++ {
 		t.markDirty(y)
-		for x := x0; x <= x1; x++ {
-			t.lines[y][x] = t.cur.Attr
-			t.lines[y][x].Char = ' '
-			// Erase operations must NOT carry the cursor's hyperlink onto
-			// blank cells. If cur.Attr.Link != 0 (we're between an OSC 8
-			// open and close, or just inside a link region), copying it
-			// here would tag every cleared cell as part of that link —
-			// making "ESC[K right of $ " or scrollUp during a link region
-			// turn the entire trailing row into a clickable link. Per
-			// OSC 8 spec, links bracket character output, not whitespace.
-			t.lines[y][x].Link = 0
+		start, end := x0, x1
+		if t.lines[y][start].Width == -1 && start > 0 {
+			start--
+		}
+		if t.lines[y][end].Width == 2 && end+1 < t.cols {
+			end++
+		}
+		for x := start; x <= end; x++ {
+			t.eraseCell(x, y)
 		}
 	}
 }
@@ -731,6 +888,19 @@ func (t *State) setMode(priv bool, set bool, args []int) {
 				t.moveAbsTo(0, 0)
 			case 7: // DECAWM - auto wrap
 				t.modMode(set, ModeWrap)
+			case 12: // cursor blink, preserving the selected shape
+				shape := t.cur.Shape
+				if shape == 0 {
+					shape = 1
+				}
+				if set {
+					shape = (shape-1)/2*2 + 1
+				} else {
+					shape = (shape-1)/2*2 + 2
+				}
+				t.cur.Shape = shape
+			case 66:
+				t.modMode(set, ModeAppKeypad)
 			// IGNORED:
 			case 0, // error
 				2,  // DECANM - ANSI/VT52
@@ -739,8 +909,7 @@ func (t *State) setMode(priv bool, set bool, args []int) {
 				8,  // DECARM - auto repeat
 				18, // DECPFF - printer feed
 				19, // DECPEX - printer extent
-				42, // DECNRCM - national characters
-				12: // att610 - start blinking cursor
+				42: // DECNRCM - national characters
 				// modes we intentionally ignore
 			case 25: // DECTCEM - text cursor enable mode
 				t.modMode(!set, ModeHide)
@@ -794,6 +963,8 @@ func (t *State) setMode(priv bool, set bool, args []int) {
 				t.modMode(set, ModeSetPaste)
 			case 2026: // synchronized update
 				t.modMode(set, ModeSync)
+			case 2027:
+				t.modMode(set, ModeGrapheme)
 			default:
 				t.logf("unknown private set/reset mode %d\n", a)
 			}
@@ -887,7 +1058,10 @@ func (t *State) setAttr(attr []int) {
 			t.cur.Attr.Mode |= attrInvisible
 		case 9:
 			t.cur.Attr.Mode |= attrStrikethrough
-		case 21, 22:
+		case 21:
+			t.cur.Attr.Mode &^= attrUnderlineStyleMask
+			t.cur.Attr.Mode |= attrUnderline | attrUnderlineStyleBit0
+		case 22:
 			t.cur.Attr.Mode &^= attrBold | attrDim // SGR 22 resets both bold and dim
 		case 23:
 			t.cur.Attr.Mode &^= attrItalic
@@ -1029,6 +1203,7 @@ func (t *State) setAttr(attr []int) {
 }
 
 func (t *State) insertBlanks(n int) {
+	n = clamp(n, 1, t.cols-t.cur.X)
 	src := t.cur.X
 	dst := src + n
 	size := t.cols - dst
@@ -1039,7 +1214,10 @@ func (t *State) insertBlanks(n int) {
 		t.clear(t.cur.X, t.cur.Y, t.cols-1, t.cur.Y)
 	} else {
 		copy(t.lines[t.cur.Y][dst:dst+size], t.lines[t.cur.Y][src:src+size])
-		t.clear(src, t.cur.Y, dst-1, t.cur.Y)
+		for x := src; x < dst; x++ {
+			t.eraseCell(x, t.cur.Y)
+		}
+		t.repairWideRow(t.cur.Y)
 	}
 }
 
@@ -1058,6 +1236,7 @@ func (t *State) deleteLines(n int) {
 }
 
 func (t *State) deleteChars(n int) {
+	n = clamp(n, 1, t.cols-t.cur.X)
 	src := t.cur.X + n
 	dst := t.cur.X
 	size := t.cols - src
@@ -1068,7 +1247,10 @@ func (t *State) deleteChars(n int) {
 		t.clear(t.cur.X, t.cur.Y, t.cols-1, t.cur.Y)
 	} else {
 		copy(t.lines[t.cur.Y][dst:dst+size], t.lines[t.cur.Y][src:src+size])
-		t.clear(t.cols-n, t.cur.Y, t.cols-1, t.cur.Y)
+		for x := t.cols - n; x < t.cols; x++ {
+			t.eraseCell(x, t.cur.Y)
+		}
+		t.repairWideRow(t.cur.Y)
 	}
 }
 
@@ -1089,7 +1271,11 @@ func (t *State) String() string {
 	for y := 0; y < t.rows; y++ {
 		for x := 0; x < t.cols; x++ {
 			attr := t.Cell(x, y)
+			if attr.Width < 0 {
+				continue
+			}
 			view = append(view, attr.Char)
+			view = append(view, []rune(attr.Combining)...)
 		}
 		view = append(view, '\n')
 	}

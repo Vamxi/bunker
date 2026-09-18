@@ -120,7 +120,8 @@ type Pane struct {
 	// rawBuf stores the raw PTY byte stream (capped at rawBufMax) so that the
 	// terminal content can be replayed into a fresh vt10x on resize, giving
 	// correct line-wrap reflow at the new column width.  Protected by mu.
-	rawBuf []byte
+	rawBuf      []byte
+	hasGraphics bool
 
 	// altEntryCursor remembers the primary-screen cursor position at the moment
 	// the pane entered the alternate screen.  vt10x shares a single saved-cursor
@@ -145,6 +146,7 @@ type Pane struct {
 	// Protected by mu.
 	transientLineClear      bool
 	transientLineClearUntil time.Time
+	syncDeadline            time.Time
 
 	// progressCursorHiddenUntil suppresses the host cursor during rapid
 	// carriage-return status/progress rewrites. Some CLI progress bars do not
@@ -160,7 +162,8 @@ type Pane struct {
 	// All kitty keyboard sequences are stripped before vt10x sees them —
 	// vt10x misinterprets the 'u' final byte as DECRC (restore cursor).
 	// Protected by mu.
-	kittyStack []int
+	kittyStack     []int
+	kittyOwnerPGID int
 
 	// Temporary status message (e.g. "COPIED") shown in the status bar.
 	// Clears automatically after statusMsgEnd.  Protected by mu.
@@ -186,7 +189,7 @@ type Pane struct {
 //	done      - closed by the app on shutdown
 //	colors    - default OSC 10/11/12 colours for the pane (from theme or host probe)
 //	oscBuf    - receives OSC 7/8/52/133 sequences to forward to the host terminal
-func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, colors hostOSCColors, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscBuf *oscBuffer) (*Pane, error) {
+func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, colors hostOSCColors, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscBuf *oscBuffer, cellAspect ...float64) (*Pane, error) {
 	if w < 2 || h < 1 {
 		return nil, fmt.Errorf("pane too small: %dx%d", w, h)
 	}
@@ -221,29 +224,15 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, col
 	// SGR 4:3 curly underline, SGR 58 colored underline, kitty keyboard protocol.
 	cmd.Env = append(filtered, "TERM=xterm-256color", "COLORTERM=truecolor", "BUNK=1", "VTE_VERSION=8203")
 
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Rows: uint16(h),
-		Cols: uint16(w - 1), // reserve last column for the scrollbar
-	})
+	cellWidth, cellHeight := virtualCellPixels(cellAspect)
+	ptmx, err := pty.StartWithSize(cmd, paneWinsize(w-1, h, cellWidth, cellHeight))
 	if err != nil {
 		return nil, fmt.Errorf("pty.StartWithSize: %w", err)
 	}
 
-	// Initialise the VT10x state machine.
-	// NOTE: we intentionally do NOT use vt10x.WithWriter(ptmx) here.
-	// WithWriter makes vt10x write OSC 10/11 colour-query responses (and
-	// other device-report replies) directly to the PTY master — i.e. into
-	// the shell's stdin.  This causes two problems:
-	//   1. SSH panes: response bytes are forwarded to the remote server as
-	//      user input, corrupting the remote session.
-	//   2. Fast-exiting programs (gh, bat --paging=never, …) may exit
-	//      before reading the response; bash readline then echoes the
-	//      stale bytes as visible garbage on the prompt line.
-	// DA/DA2/CPR responses are handled manually in captureAndWrite where
-	// we can gate them on specific conditions.  OSC 10/11/12 responses are
-	// restricted to alt-screen mode for the same reason as (2) above: in
-	// normal mode the response can be read as keyboard input by the next
-	// program (e.g. survey used by gh auth login).
+	// Ordinary device queries are answered by captureAndWrite using pane
+	// state and theme colours. Graphics acknowledgements are emitted by the
+	// decoder, independently, so requests are answered exactly once.
 	// Create the pane first so we can pass p.onScrollRow as the scroll
 	// callback.  p.term is set immediately after; the callback is only
 	// invoked from readPTY (started below), so p.term is always valid
@@ -259,7 +248,7 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, col
 		themeCursorColor: colors.cursor,
 	}
 	p.term = vt10x.New(vt10x.WithSize(w-1, h), vt10x.WithScrollCallback(p.onScrollRow),
-		vt10x.WithScrollbackClearCallback(p.onScrollbackClear))
+		vt10x.WithScrollbackClearCallback(p.onScrollbackClear), vt10x.WithGraphicsReply(p.writeInput), vt10x.WithCellPixels(cellWidth, cellHeight))
 
 	// One-time container detection: read the shell process's own environ.
 	if cmd.Process != nil {
@@ -294,9 +283,10 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, col
 //  5. Signals the render loop to repaint.
 func (p *Pane) readPTY(redraw chan struct{}, oscBuf *oscBuffer) {
 	buf := make([]byte, 32768)
-	var carry []byte // incomplete UTF-8 / ANSI tail from previous read
+	var stream ptyStream
 	var transientClearTimer *time.Timer
 	var progressCursorTimer *time.Timer
+	var syncTimer *time.Timer
 	defer func() {
 		if transientClearTimer != nil {
 			transientClearTimer.Stop()
@@ -304,20 +294,22 @@ func (p *Pane) readPTY(redraw chan struct{}, oscBuf *oscBuffer) {
 		if progressCursorTimer != nil {
 			progressCursorTimer.Stop()
 		}
+		if syncTimer != nil {
+			syncTimer.Stop()
+		}
 	}()
 
 	scheduleTransientClearRedraw := func(until time.Time) {
-		if transientClearTimer == nil {
-			transientClearTimer = time.AfterFunc(transientLineClearDelay, func() {
-				p.clearTransientLineClearIfUntil(until)
-				select {
-				case redraw <- struct{}{}:
-				default:
-				}
-			})
-			return
+		if transientClearTimer != nil {
+			transientClearTimer.Stop()
 		}
-		transientClearTimer.Reset(transientLineClearDelay)
+		transientClearTimer = time.AfterFunc(transientLineClearDelay, func() {
+			p.clearTransientLineClearIfUntil(until)
+			select {
+			case redraw <- struct{}{}:
+			default:
+			}
+		})
 	}
 	cancelTransientClearRedraw := func() {
 		if transientClearTimer != nil {
@@ -342,16 +334,7 @@ func (p *Pane) readPTY(redraw chan struct{}, oscBuf *oscBuffer) {
 		if n > 0 {
 			chunk := buf[:n]
 
-			// Prepend any incomplete UTF-8 / ANSI bytes carried from the previous read.
-			if len(carry) > 0 {
-				chunk = append(carry, chunk...)
-			}
-
-			// Hold back a trailing incomplete UTF-8 rune or ANSI control
-			// sequence so captureAndWrite only sees complete units.  This keeps
-			// vt10x, OSC forwarding, and our manual query/alt-screen handling
-			// aligned even when a control sequence straddles two PTY reads.
-			chunk, carry = splitPTYChunk(chunk)
+			chunk = stream.scan(chunk)
 			if len(chunk) == 0 {
 				if err != nil {
 					L.Debug("readPTY: PTY read error (shell exited)", "pane", p.id, "err", err)
@@ -379,6 +362,22 @@ func (p *Pane) readPTY(redraw chan struct{}, oscBuf *oscBuffer) {
 			p.captureAndWrite(chunk)
 			scrolling := p.sbOff > 0
 			syncing := p.term.Mode()&vt10x.ModeSync != 0
+			if syncing && p.syncDeadline.IsZero() {
+				until := now.Add(syncUpdateTimeout)
+				p.syncDeadline = until
+				syncTimer = time.AfterFunc(syncUpdateTimeout, func() {
+					p.expireSyncUpdate(until)
+					select {
+					case redraw <- struct{}{}:
+					default:
+					}
+				})
+			} else if !syncing {
+				p.syncDeadline = time.Time{}
+				if syncTimer != nil {
+					syncTimer.Stop()
+				}
+			}
 			visibleTransientClear := transientClear && !scrolling && !syncing
 			p.transientLineClear = visibleTransientClear
 			transientClearUntil := time.Time{}
@@ -433,6 +432,18 @@ func (p *Pane) clearTransientLineClearIfUntil(until time.Time) {
 
 const transientLineClearDelay = 40 * time.Millisecond
 const progressCursorHideDelay = 120 * time.Millisecond
+const syncUpdateTimeout = time.Second
+
+func (p *Pane) expireSyncUpdate(until time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.syncDeadline.Equal(until) {
+		if _, err := p.term.Write([]byte("\x1b[?2026l")); err != nil {
+			L.Warn("expire synchronized update", "pane", p.id, "err", err)
+		}
+		p.syncDeadline = time.Time{}
+	}
+}
 
 func isTransientLineClear(chunk []byte) bool {
 	if len(chunk) < 3 || bytes.ContainsAny(chunk, "\n\x1b") {
@@ -529,30 +540,28 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 		return
 	}
 
-	if p.fgProcess != "ssh" && p.fgProcess != "mosh" {
-		offset := 0
-		for offset < len(chunk) {
-			q, ok := nextTerminalQuery(chunk, offset)
-			if !ok {
-				p.writeTerminalChunk(chunk[offset:])
-				return
-			}
-			if q.start > offset {
-				p.writeTerminalChunk(chunk[offset:q.start])
-			}
-			p.writeTerminalChunk(chunk[q.start:q.end])
-			p.replyTerminalQuery(q)
-			offset = q.end
+	offset := 0
+	for offset < len(chunk) {
+		q, ok := nextTerminalQuery(chunk, offset)
+		if !ok {
+			p.writeTerminalChunk(chunk[offset:])
+			return
 		}
-		return
+		if q.start > offset {
+			p.writeTerminalChunk(chunk[offset:q.start])
+		}
+		p.writeTerminalChunk(chunk[q.start:q.end])
+		p.replyTerminalQuery(q)
+		offset = q.end
 	}
-
-	p.writeTerminalChunk(chunk)
 }
 
 // writeTerminalChunk feeds chunk into vt10x while preserving bunk's
 // scrollback, rawBuf replay, alt-screen hygiene, and kitty-keyboard handling.
 func (p *Pane) writeTerminalChunk(chunk []byte) {
+	if !p.hasGraphics {
+		p.hasGraphics = containsGraphics(chunk)
+	}
 	altScreen := p.term.Mode()&vt10x.ModeAltScreen != 0
 	if L.Enabled(context.Background(), LevelTrace) {
 		cur := p.term.Cursor()
@@ -575,17 +584,7 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 	// paint absolute-position content that doesn't replay meaningfully.
 	if !altScreen {
 		p.rawBuf = append(p.rawBuf, chunk...)
-		rawMax := p.scrollbackLines * 200
-		if len(p.rawBuf) > rawMax {
-			// Trim from the front at a clean newline boundary so we don't
-			// start playback in the middle of an ANSI escape sequence.
-			excess := len(p.rawBuf) - rawMax
-			if nl := bytes.IndexByte(p.rawBuf[excess:], '\n'); nl >= 0 {
-				p.rawBuf = p.rawBuf[excess+nl+1:]
-			} else {
-				p.rawBuf = p.rawBuf[excess:]
-			}
-		}
+		p.trimRawHistory()
 	}
 
 	// If this chunk crosses an alt-screen entry point:
@@ -689,15 +688,7 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 			L.Log(context.Background(), LevelTrace, "captureAndWrite: injecting curRestore (fallback)", "pane", p.id, "seq", curRestore)
 			p.term.Write([]byte(curRestore)) //nolint:errcheck
 		}
-		rawMax := p.scrollbackLines * 200
-		if len(p.rawBuf) > rawMax {
-			excess := len(p.rawBuf) - rawMax
-			if nl := bytes.IndexByte(p.rawBuf[excess:], '\n'); nl >= 0 {
-				p.rawBuf = p.rawBuf[excess+nl+1:]
-			} else {
-				p.rawBuf = p.rawBuf[excess:]
-			}
-		}
+		p.trimRawHistory()
 
 		// Signal the render loop to do a full Sync() repaint so any residual
 		// background colour from the TUI app is cleared from the terminal.
@@ -718,6 +709,10 @@ const (
 	terminalQueryOSC10
 	terminalQueryOSC11
 	terminalQueryOSC12
+	terminalQueryDA3
+	terminalQueryDSR
+	terminalQueryDECRQSS
+	terminalQuerySize
 )
 
 type terminalQuery struct {
@@ -729,6 +724,23 @@ type terminalQuery struct {
 
 func (p *Pane) replyTerminalQuery(q terminalQuery) {
 	switch q.kind {
+	case terminalQuerySize:
+		cols, rows := p.term.Size()
+		cw, ch := p.term.CellPixels()
+		switch q.mode {
+		case 14:
+			p.writeInput(fmt.Appendf(nil, "\x1b[4;%d;%dt", rows*ch, cols*cw))
+		case 16:
+			p.writeInput(fmt.Appendf(nil, "\x1b[6;%d;%dt", ch, cw))
+		case 18:
+			p.writeInput(fmt.Appendf(nil, "\x1b[8;%d;%dt", rows, cols))
+		}
+	case terminalQueryDA3:
+		p.writeInput([]byte("\x1bP!|00000000\x1b\\"))
+	case terminalQueryDSR:
+		p.writeInput([]byte("\x1b[0n"))
+	case terminalQueryDECRQSS:
+		p.writeInput([]byte(p.term.StatusString(q.payload)))
 	case terminalQueryDA:
 		p.ptmx.Write([]byte("\x1b[?62;1;2;4;6;9;15;22c")) //nolint:errcheck
 		L.Log(context.Background(), LevelTrace, "captureAndWrite: DA response", "pane", p.id)
@@ -746,13 +758,14 @@ func (p *Pane) replyTerminalQuery(q terminalQuery) {
 		}
 		L.Log(context.Background(), LevelTrace, "captureAndWrite: XTGETTCAP response", "pane", p.id, "payload", q.payload)
 	case terminalQueryCPR:
-		if p.term.Mode()&vt10x.ModeAltScreen != 0 {
-			return
+		x, y := p.term.CursorPosition()
+		prefix := ""
+		if q.mode != 0 {
+			prefix = "?"
 		}
-		cur := p.term.Cursor()
-		resp := fmt.Sprintf("\x1b[%d;%dR", cur.Y+1, cur.X+1)
+		resp := fmt.Sprintf("\x1b[%s%d;%dR", prefix, y+1, x+1)
 		p.ptmx.Write([]byte(resp)) //nolint:errcheck
-		L.Log(context.Background(), LevelTrace, "captureAndWrite: CPR response", "pane", p.id, "row", cur.Y+1, "col", cur.X+1)
+		L.Log(context.Background(), LevelTrace, "captureAndWrite: CPR response", "pane", p.id, "row", y+1, "col", x+1)
 	case terminalQueryDECRQM:
 		status := p.term.QueryPrivateMode(q.mode)
 		resp := fmt.Sprintf("\x1b[?%d;%c$y", q.mode, status)
@@ -768,9 +781,6 @@ func (p *Pane) replyTerminalQuery(q terminalQuery) {
 }
 
 func (p *Pane) replyOSCColorQuery(num int, def vt10x.Color, fallback string) {
-	if p.term.Mode()&vt10x.ModeAltScreen == 0 {
-		return
-	}
 	color := p.currentOSCColor(def, fallback)
 	if color == "" {
 		return
@@ -829,7 +839,14 @@ func nextTerminalQuery(data []byte, from int) (terminalQuery, bool) {
 					payload: string(data[i+4 : end-2]),
 				}, true
 			}
+			if bytes.HasPrefix(data[i:end], []byte("\x1bP$q")) {
+				return terminalQuery{start: i, end: end, kind: terminalQueryDECRQSS, payload: string(data[i+4 : end-2])}, true
+			}
 			i = end - 1
+		case '_', '^', 'X':
+			if end := dcsSequenceEnd(data, i); end > i {
+				i = end - 1
+			}
 		}
 	}
 	return terminalQuery{}, false
@@ -838,6 +855,18 @@ func nextTerminalQuery(data []byte, from int) (terminalQuery, bool) {
 func parseCSIQuery(data []byte, start int) (terminalQuery, bool) {
 	rest := data[start:]
 	switch {
+	case bytes.HasPrefix(rest, []byte("\x1b[14t")):
+		return terminalQuery{start: start, end: start + 5, kind: terminalQuerySize, mode: 14}, true
+	case bytes.HasPrefix(rest, []byte("\x1b[16t")):
+		return terminalQuery{start: start, end: start + 5, kind: terminalQuerySize, mode: 16}, true
+	case bytes.HasPrefix(rest, []byte("\x1b[18t")):
+		return terminalQuery{start: start, end: start + 5, kind: terminalQuerySize, mode: 18}, true
+	case bytes.HasPrefix(rest, []byte("\x1b[=c")):
+		return terminalQuery{start: start, end: start + 4, kind: terminalQueryDA3}, true
+	case bytes.HasPrefix(rest, []byte("\x1b[=0c")):
+		return terminalQuery{start: start, end: start + 5, kind: terminalQueryDA3}, true
+	case bytes.HasPrefix(rest, []byte("\x1b[5n")):
+		return terminalQuery{start: start, end: start + 4, kind: terminalQueryDSR}, true
 	case bytes.HasPrefix(rest, []byte("\x1b[>0q")):
 		return terminalQuery{start: start, end: start + len("\x1b[>0q"), kind: terminalQueryXTVERSION}, true
 	case bytes.HasPrefix(rest, []byte("\x1b[>q")):
@@ -852,6 +881,8 @@ func parseCSIQuery(data []byte, start int) (terminalQuery, bool) {
 		return terminalQuery{start: start, end: start + len("\x1b[c"), kind: terminalQueryDA}, true
 	case bytes.HasPrefix(rest, []byte("\x1b[6n")):
 		return terminalQuery{start: start, end: start + len("\x1b[6n"), kind: terminalQueryCPR}, true
+	case bytes.HasPrefix(rest, []byte("\x1b[?6n")):
+		return terminalQuery{start: start, end: start + 5, kind: terminalQueryCPR, mode: 1}, true
 	case bytes.HasPrefix(rest, []byte("\x1b[?")):
 		mode, end, ok := parseDECRQM(data, start)
 		if ok {
@@ -1007,12 +1038,10 @@ func (p *Pane) resize(x, y, w, h int) {
 	p.mu.Lock()
 	p.x, p.y, p.w, p.h = x, y, w, h
 	p.resizeAndReflow(w-1, h)
+	cw, ch := p.term.CellPixels()
 	p.mu.Unlock()
 	if p.ptmx != nil {
-		pty.Setsize(p.ptmx, &pty.Winsize{ //nolint:errcheck
-			Rows: uint16(h),
-			Cols: uint16(w - 1), // last column reserved for scrollbar
-		})
+		pty.Setsize(p.ptmx, paneWinsize(w-1, h, cw, ch)) //nolint:errcheck
 	}
 }
 
@@ -1040,12 +1069,10 @@ func (p *Pane) resizePTYOnly(x, y, w, h int) {
 		p.term.Write([]byte("\x1b[0m")) //nolint:errcheck
 		p.term.Resize(w-1, h)
 	}
+	cw, ch := p.term.CellPixels()
 	p.mu.Unlock()
 	if p.ptmx != nil {
-		pty.Setsize(p.ptmx, &pty.Winsize{ //nolint:errcheck
-			Rows: uint16(h),
-			Cols: uint16(w - 1), // last column reserved for scrollbar
-		})
+		pty.Setsize(p.ptmx, paneWinsize(w-1, h, cw, ch)) //nolint:errcheck
 	}
 }
 
@@ -1054,7 +1081,7 @@ func (p *Pane) resizePTYOnly(x, y, w, h int) {
 // When raw PTY bytes are available, the entire output history is replayed
 // into a temporary vt10x at the new width so lines wrap correctly at the
 // new column count.  The resulting state is split into a new glyph scrollback
-// (rows that don't fit in newRows) and a fresh live terminal (the rest).
+// (rows that don't fit in newRows) and the replacement live grid (the rest).
 //
 // For alt-screen apps (vim, htop, …) reflow is skipped — they redraw
 // themselves after SIGWINCH.
@@ -1103,20 +1130,16 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 	// scratch terminal.  Pre-vim shell history is preserved.
 	replay := stripAltScreen(p.rawBuf)
 
-	// Estimate the replay height from the raw byte count.  A typical
-	// terminal line is ~40-80 visible characters plus ANSI escapes, but
-	// can be as short as a single newline.  Using a conservative estimate
-	// of rawBuf_bytes / newCols gives an upper bound on the number of
-	// wrapped lines.  Cap at scrollbackLines + newRows to avoid
-	// over-allocation, but also avoid the full allocation when the buffer
-	// is small (e.g. a fresh pane with only a few lines of output).
-	estimatedLines := len(replay)/max(newCols, 1) + newRows
+	// Hard line breaks consume rows independently of line wrapping. Count
+	// both, capped at the history limit, so short lines survive replay.
+	estimatedLines := len(replay)/max(newCols, 1) + bytes.Count(replay, []byte{'\n'}) + newRows
 	replayH := min(estimatedLines, p.scrollbackLines+newRows)
 	if replayH < newRows {
 		replayH = newRows
 	}
 
-	scratch := vt10x.New(vt10x.WithSize(newCols, replayH))
+	cw, ch := p.term.CellPixels()
+	scratch := vt10x.New(vt10x.WithSize(newCols, replayH), vt10x.WithCellPixels(cw, ch), vt10x.WithGraphicsState(p.term.GraphicsState()), vt10x.WithGraphicsViewportRows(newRows))
 	// Prepend a full SGR reset so trimmed attribute state doesn't bleed.
 	scratch.Write(append([]byte("\x1b[0m"), replay...)) //nolint:errcheck
 
@@ -1161,7 +1184,11 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 	oldSbCount := p.sb.count
 	p.sb = sbRing{maxLines: p.scrollbackLines}
 	for r := 0; r < firstVisible; r++ {
-		p.sb.push(captureRow(scratch, r, newCols))
+		row := captureRow(scratch, r, newCols)
+		for c := range row {
+			row[c] = p.term.ImportGlyph(row[c], scratch)
+		}
+		p.sb.push(row)
 	}
 
 	// Reposition the viewport so the same content line appears in the
@@ -1183,7 +1210,7 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 		scratch, newCols,
 	)
 
-	// Rebuild the live terminal by injecting only the visible rows.
+	// Replace only the visible grid, retaining the live terminal state.
 	visibleRows := make([][]vt10x.Glyph, newRows)
 	for r := 0; r < newRows; r++ {
 		srcRow := firstVisible + r
@@ -1193,19 +1220,13 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 			visibleRows[r] = make([]vt10x.Glyph, newCols) // blank padding
 		}
 	}
-	p.term = vt10x.New(vt10x.WithSize(newCols, newRows), vt10x.WithScrollCallback(p.onScrollRow))
-	reflowInject(p.term, visibleRows)
 
-	// Restore the cursor to its original position.  reflowInject leaves it at
-	// the end of the last content row, but the cursor may have been past the
-	// trimmed content (e.g. after `$ ` where the trailing space was stripped)
-	// or on a blank row below content (after a trailing \r\n from a log
-	// stream).  An explicit CUP keeps the cursor where the shell put it.
+	// Translate the replay cursor into the visible slice, retaining the
+	// live terminal's modes, attributes, colours, and callbacks.
 	scratchCur := scratch.Cursor()
 	visCurRow := scratchCur.Y - firstVisible
-	if visCurRow >= 0 && visCurRow < newRows {
-		moveCursorTo(p.term, scratchCur.X, visCurRow)
-	}
+	scratchCur.Y = max(0, min(visCurRow, newRows-1))
+	p.term.ReplaceScreen(newCols, newRows, visibleRows, scratchCur, scratch)
 
 	L.Debug("resizeAndReflow: raw replay done", "pane", p.id,
 		"old", fmt.Sprintf("%dx%d", oldCols, oldRows),
@@ -1253,8 +1274,7 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 			p.sb = newSB
 		}
 
-		// Capture the original cursor position before rebuilding p.term so we
-		// can restore it after reflowInject.
+		// Move the cursor down by the number of rows pulled from history.
 		origCur := p.term.Cursor()
 		combCurRow := pull + origCur.Y
 
@@ -1268,11 +1288,8 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 			p.sbOff = 0
 		}
 
-		p.term = vt10x.New(vt10x.WithSize(cols, newRows), vt10x.WithScrollCallback(p.onScrollRow))
-		reflowInject(p.term, combined)
-		if combCurRow >= 0 && combCurRow < newRows {
-			moveCursorTo(p.term, origCur.X, combCurRow)
-		}
+		origCur.Y = max(0, min(combCurRow, newRows-1))
+		p.term.ReplaceScreen(cols, newRows, combined, origCur, p.term)
 	} else {
 		// Terminal shrank: push excess live rows into scrollback.
 		// First find the actual content extent — trailing blank rows should
@@ -1297,8 +1314,7 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 				remaining[r] = make([]vt10x.Glyph, cols)
 			}
 		}
-		// Capture the original cursor position before rebuilding p.term so we
-		// can restore it after reflowInject.
+		// Move the cursor up by the number of rows archived into history.
 		origCur := p.term.Cursor()
 		remCurRow := origCur.Y - excess
 
@@ -1309,11 +1325,8 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 			p.sbOff = min(oldSbOff+excess, p.sb.count)
 		} // else: live view stays live view (sbOff 0 → 0)
 
-		p.term = vt10x.New(vt10x.WithSize(cols, newRows), vt10x.WithScrollCallback(p.onScrollRow))
-		reflowInject(p.term, remaining)
-		if remCurRow >= 0 && remCurRow < newRows {
-			moveCursorTo(p.term, origCur.X, remCurRow)
-		}
+		origCur.Y = max(0, min(remCurRow, newRows-1))
+		p.term.ReplaceScreen(cols, newRows, remaining, origCur, p.term)
 	}
 
 	L.Debug("resizeHeightOnly: done", "pane", p.id,
@@ -1358,115 +1371,6 @@ func utf8Boundary(b []byte) int {
 		// continuation byte (0x80..0xBF) — keep scanning
 	}
 	return n
-}
-
-// splitPTYChunk returns the prefix of chunk that is safe to process now and
-// the trailing bytes that must be carried into the next PTY read.
-//
-// Two cases are withheld:
-//   - an incomplete UTF-8 tail, so vt10x never sees split runes
-//   - an incomplete ANSI escape/control sequence, so our query handling and
-//     alt-screen detection never see split sequences
-func splitPTYChunk(chunk []byte) (complete, carry []byte) {
-	if len(chunk) == 0 {
-		return nil, nil
-	}
-
-	split := utf8Boundary(chunk)
-	head := chunk[:split]
-	if tailLen := ansiTailLen(head); tailLen > 0 {
-		start := len(head) - tailLen
-		carry = make([]byte, len(chunk)-start)
-		copy(carry, chunk[start:])
-		return head[:start], carry
-	}
-	if split < len(chunk) {
-		carry = make([]byte, len(chunk)-split)
-		copy(carry, chunk[split:])
-	}
-	return head, carry
-}
-
-// ansiTailLen reports how many trailing bytes belong to an incomplete
-// escape/control sequence at the end of b.  Complete OSC/DCS strings and CSI
-// sequences return 0; incomplete ones return the full suffix length starting
-// from the ESC byte.
-func ansiTailLen(b []byte) int {
-	const (
-		ansiIdle = iota
-		ansiSeenESC
-		ansiCSI
-		ansiOSC
-		ansiOSCEsc
-		ansiDCS
-		ansiDCSEsc
-	)
-
-	state := ansiIdle
-	start := -1
-	for i, c := range b {
-		switch state {
-		case ansiIdle:
-			if c == 0x1b {
-				state = ansiSeenESC
-				start = i
-			}
-
-		case ansiSeenESC:
-			switch c {
-			case '[':
-				state = ansiCSI
-			case ']':
-				state = ansiOSC
-			case 'P':
-				state = ansiDCS
-			default:
-				state = ansiIdle
-				start = -1
-			}
-
-		case ansiCSI:
-			if c >= 0x40 && c <= 0x7e {
-				state = ansiIdle
-				start = -1
-			}
-
-		case ansiOSC:
-			switch c {
-			case 0x07:
-				state = ansiIdle
-				start = -1
-			case 0x1b:
-				state = ansiOSCEsc
-			}
-
-		case ansiOSCEsc:
-			if c == '\\' {
-				state = ansiIdle
-				start = -1
-			} else {
-				state = ansiOSC
-			}
-
-		case ansiDCS:
-			if c == 0x1b {
-				state = ansiDCSEsc
-			}
-
-		case ansiDCSEsc:
-			if c == '\\' {
-				state = ansiIdle
-				start = -1
-			} else {
-				state = ansiDCS
-			}
-		}
-	}
-
-	if state != ansiIdle && start >= 0 {
-		return len(b) - start
-	}
-	return 0
 }
 
 // scanDECRQM scans data for DECRQM private-mode queries (\x1b[?N$p) and calls
@@ -1660,6 +1564,12 @@ func (p *Pane) selText() string {
 		}
 		var line strings.Builder
 		for c := fromCol; c <= toCol && c < cols; c++ {
+			if cells != nil && c < len(cells) && cells[c].Width < 0 {
+				if cells[c].Width == -1 && c == fromCol && c > 0 {
+					line.WriteString(cells[c-1].Text())
+				}
+				continue
+			}
 			ch := rune(' ')
 			if cells != nil && c < len(cells) {
 				if g := cells[c].Char; g != 0 {
@@ -1667,6 +1577,9 @@ func (p *Pane) selText() string {
 				}
 			}
 			line.WriteRune(ch)
+			if cells != nil && c < len(cells) {
+				line.WriteString(cells[c].Combining)
+			}
 		}
 		// Only trim trailing spaces on hard-break rows; soft-wrapped rows
 		// are full-width by definition.
@@ -1688,7 +1601,7 @@ func (p *Pane) selText() string {
 //
 //	\x1b [ ? u         - query: respond with \x1b[?<flags>u (top of stack or 0)
 //	\x1b [ > <n> u     - push: save current flags and activate <n>  (spec)
-//	\x1b [ = <n> u     - push: same, legacy form used by some apps
+//	\x1b [ = <n> ; <mode> u - replace/add/remove current flag bits
 //	\x1b [ < <N> u     - pop:  pop N stack levels (N omitted → 1)
 //
 // Must be called with p.mu held (captureAndWrite contract).
@@ -1702,12 +1615,29 @@ func (p *Pane) handleKittyKeyboard(chunk []byte) []byte {
 
 	i := 0
 	for i < len(chunk) {
-		esc := bytes.Index(chunk[i:], []byte("\x1b["))
+		esc := bytes.IndexByte(chunk[i:], 0x1b)
 		if esc < 0 {
 			break // no more ESC [ — remainder is flushed below
 		}
 		abs := i + esc // absolute position of ESC in chunk
-		j := abs + 2   // first byte after '['
+		if abs+1 >= len(chunk) {
+			break
+		}
+		if chunk[abs+1] != '[' {
+			end := abs + 2
+			switch chunk[abs+1] {
+			case ']':
+				end = oscSequenceEnd(chunk, abs)
+			case 'P', '_', '^', 'X':
+				end = dcsSequenceEnd(chunk, abs)
+			}
+			if end < 0 {
+				break
+			}
+			i = end
+			continue
+		}
+		j := abs + 2 // first byte after '['
 		if j >= len(chunk) {
 			break // truncated sequence at end of chunk — pass through
 		}
@@ -1742,11 +1672,31 @@ func (p *Pane) handleKittyKeyboard(chunk []byte) []byte {
 			if k < len(chunk) && chunk[k] == 'u' {
 				flags := 0
 				fmt.Sscanf(string(chunk[j+1:k]), "%d", &flags) //nolint:errcheck // best-effort parse of the first param; flags defaults to 0
+				mode := 1
+				if sep := bytes.IndexByte(chunk[j+1:k], ';'); sep >= 0 {
+					fmt.Sscanf(string(chunk[j+2+sep:k]), "%d", &mode) //nolint:errcheck // omitted mode defaults to replacement
+				}
+				if intro == '=' && len(p.kittyStack) == 0 {
+					p.kittyStack = append(p.kittyStack, 0)
+				}
 				if intro == '=' && len(p.kittyStack) > 0 {
-					// "set" replaces the current flags rather than pushing.
-					p.kittyStack[len(p.kittyStack)-1] = flags
+					top := &p.kittyStack[len(p.kittyStack)-1]
+					switch mode {
+					case 1:
+						*top = flags
+					case 2:
+						*top |= flags
+					case 3:
+						*top &^= flags
+					}
 				} else {
+					if len(p.kittyStack) >= 32 {
+						p.kittyStack = p.kittyStack[1:]
+					}
 					p.kittyStack = append(p.kittyStack, flags)
+				}
+				if p.cmd != nil && p.cmd.Process != nil {
+					p.kittyOwnerPGID = termFgPGID(p.cmd.Process.Pid)
 				}
 				newI = k + 1
 				stripped = true

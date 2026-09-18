@@ -46,7 +46,11 @@ func init() {
 	// Override help to load the config first so effective (user-overridden)
 	// keybindings are shown rather than built-in defaults.
 	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		cfg := LoadConfig(flagConfig, flagTheme)
+		cfg, err := LoadConfig(flagConfig, flagTheme)
+		if err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), err) //nolint:errcheck // help runs before terminal initialization
+			return
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "%s\n%s\nUsage:\n  %s\n\nFlags:\n%s", //nolint:errcheck // help text write
 			bunkLogo(),
 			keybindingsHelpText(&cfg.Keybindings),
@@ -77,7 +81,10 @@ func Execute() {
 // user quits.  All terminal cleanup happens synchronously after the event
 // loop returns so it is guaranteed to run before the process exits.
 func run(configPath, themeName string, debug, trace bool) error {
-	cfg := LoadConfig(configPath, themeName)
+	cfg, err := LoadConfig(configPath, themeName)
+	if err != nil {
+		return err
+	}
 
 	// Prevent nested sessions: BUNK=1 is set in every pane's environment.
 	if os.Getenv("BUNK") != "" {
@@ -140,6 +147,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 
 	screen.EnableMouse(tcell.MouseMotionEvents)
 	screen.EnablePaste()
+	screen.EnableFocus()
 
 	// Sync before querying size: Init() may capture a stale TIOCGWINSZ
 	// snapshot if the terminal just went fullscreen.
@@ -151,6 +159,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 		app.nextID, 0, 0, w, h, app.scrollback, "", nil,
 		app.paneOSCColors(),
 		app.redraw, app.paneDead, app.done, app.oscBuf,
+		app.cellAspect,
 	)
 	if err != nil {
 		screen.Fini()
@@ -178,6 +187,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 		"\033[?1006l" + // SGR mouse extension off
 		"\033[?1049l" + // exit alternate screen
 		"\033[?25h" + // show cursor
+		"\033]112\007" + // restore outer terminal cursor colour
 		"\033[0m" + // reset all SGR attributes
 		"\033[2J\033[H" // clear screen + cursor home
 	if tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0); err == nil {

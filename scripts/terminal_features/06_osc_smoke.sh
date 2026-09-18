@@ -7,7 +7,7 @@
 # What it checks:
 #   - same-chunk alt-screen + OSC 10/11/12 set/query ordering
 #   - OSC 110/111/112 reset semantics against the pane's baseline colours
-#   - normal-mode OSC 10/11/12 suppression
+#   - normal-mode OSC 10/11/12 responses
 #   - same-chunk DECRQM state updates
 
 set -u
@@ -103,13 +103,13 @@ main() {
     assert_eq "OSC 112 reset restores baseline cursor response" "$got" "$baseline12"
 
     got=$(query_raw "${OSC}10;?${ST}")
-    assert_empty "normal-mode OSC 10 suppressed" "$got"
+    assert_eq "normal-mode OSC 10 response" "$got" "$baseline10"
 
     got=$(query_raw "${OSC}11;?${ST}")
-    assert_empty "normal-mode OSC 11 suppressed" "$got"
+    assert_eq "normal-mode OSC 11 response" "$got" "$baseline11"
 
     got=$(query_raw "${OSC}12;?${ST}")
-    assert_empty "normal-mode OSC 12 suppressed" "$got"
+    assert_eq "normal-mode OSC 12 response" "$got" "$baseline12"
 
     got=$(query_raw "${CSI}?2004h${CSI}?2004\$p${CSI}?2004l${CSI}?2004\$p")
     assert_eq "same-chunk DECRQM state updates" "$got" "${CSI}?2004;1\$y${CSI}?2004;2\$y"

@@ -103,7 +103,7 @@ func rowContentEnd(row []vt10x.Glyph) int {
 	end := len(row)
 	for end > 0 {
 		g := row[end-1]
-		if g.Char != 0 && g.Char != ' ' {
+		if g.Width < 0 || (g.Char != 0 && g.Char != ' ') {
 			break
 		}
 		end--
@@ -124,6 +124,7 @@ func rowChars(row []vt10x.Glyph) []rune {
 	for i := 0; i < end; i++ {
 		if c := row[i].Char; c != 0 { // include spaces, exclude only unset cells
 			chars = append(chars, c)
+			chars = append(chars, []rune(row[i].Combining)...)
 		}
 	}
 	return chars
@@ -271,6 +272,9 @@ func reflowInject(term vt10x.Terminal, rows [][]vt10x.Glyph) {
 		end := rowContentEnd(row)
 		for c := 0; c < end; c++ {
 			g := row[c]
+			if g.Width < 0 {
+				continue
+			}
 			if g.FG != prevFG || g.BG != prevBG || g.Mode != prevMode {
 				emitSGR(&buf, g)
 				prevFG, prevBG, prevMode = g.FG, g.BG, g.Mode
@@ -280,6 +284,7 @@ func reflowInject(term vt10x.Terminal, rows [][]vt10x.Glyph) {
 				ch = ' '
 			}
 			buf.WriteRune(ch)
+			buf.WriteString(g.Combining)
 		}
 		if r < lastContent {
 			buf.WriteString("\x1b[0m\r\n")
@@ -288,39 +293,6 @@ func reflowInject(term vt10x.Terminal, rows [][]vt10x.Glyph) {
 	}
 	buf.WriteString("\x1b[0m")
 	term.Write(buf.Bytes()) //nolint:errcheck
-}
-
-// moveCursorTo writes a CUP escape that positions term's cursor at the
-// 0-based (col, row).  The position is clamped to the terminal's bounds.
-//
-// reflowInject leaves the cursor at the end of the last content row, which
-// can be one or more columns to the left of where the cursor actually was
-// before reflow (rowContentEnd strips trailing spaces — including the space
-// after a `$ ` prompt).  Callers use this to restore the original cursor
-// position after injecting content.
-func moveCursorTo(term vt10x.Terminal, col, row int) {
-	cols, rows := term.Size()
-	if cols <= 0 || rows <= 0 {
-		return
-	}
-	if col < 0 {
-		col = 0
-	}
-	if row < 0 {
-		row = 0
-	}
-	if col >= cols {
-		col = cols - 1
-	}
-	if row >= rows {
-		row = rows - 1
-	}
-	buf := append([]byte{}, '\x1b', '[')
-	buf = strconv.AppendInt(buf, int64(row+1), 10)
-	buf = append(buf, ';')
-	buf = strconv.AppendInt(buf, int64(col+1), 10)
-	buf = append(buf, 'H')
-	term.Write(buf) //nolint:errcheck
 }
 
 // emitSGR writes a complete SGR escape sequence for the given glyph's

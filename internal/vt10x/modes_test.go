@@ -148,8 +148,8 @@ func TestQueryPrivateMode_UnknownMode(t *testing.T) {
 	term := newTestTerm(80, 24)
 	for _, m := range []int{0, 99, 9999} {
 		got := term.QueryPrivateMode(m)
-		if got != '4' {
-			t.Errorf("QueryPrivateMode(%d) = %c, want '4' (not recognized)", m, got)
+		if got != '0' {
+			t.Errorf("QueryPrivateMode(%d) = %c, want '0' (not recognized)", m, got)
 		}
 	}
 }

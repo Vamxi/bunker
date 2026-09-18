@@ -10,6 +10,7 @@
 #   bash terminal_features.sh integration
 #   bash terminal_features.sh queries
 #   bash terminal_features.sh osc
+#   bash terminal_features.sh graphics
 #
 # Notes:
 #   - `all` runs every grouped script in order.
@@ -32,6 +33,7 @@ Usage:
   bash terminal_features.sh integration
   bash terminal_features.sh queries
   bash terminal_features.sh osc
+  bash terminal_features.sh graphics
 
 Groups:
   text         SGR attributes and underline styles
@@ -40,6 +42,7 @@ Groups:
   integration  Hyperlinks, bracketed paste, OSC 133 prompt markers
   queries      DA/DA2/XTVERSION/CPR/XTGETTCAP/DECRQM/OSC color queries/kitty
   osc          Automated PASS/FAIL OSC set/query/reset and DECRQM assertions
+  graphics     SIXEL, Kitty, and iTerm2 cell-rendered static images
 EOF
 }
 
@@ -58,6 +61,8 @@ Available grouped diagnostics:
                DA/DA2/XTVERSION/CPR/XTGETTCAP/DECRQM/OSC/kitty queries
   osc          ${SCRIPT_DIR}/06_osc_smoke.sh
                Automated OSC 10/11/12 set/query/reset and DECRQM assertions
+  graphics     ${SCRIPT_DIR}/07_graphics.sh
+               Static images, pane clipping, resize, and scrollback
 
 Run all groups:
   bash terminal_features.sh all
@@ -111,6 +116,9 @@ case "${1:-all}" in
         ;;
     osc|smoke)
         run_group 06_osc_smoke.sh
+        ;;
+    graphics|images)
+        run_group 07_graphics.sh
         ;;
     *)
         usage >&2

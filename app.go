@@ -58,6 +58,7 @@ type App struct {
 	// lastCursorStyle is the DECSCUSR value (0-6) last written to the host
 	// terminal.  Compared each frame to avoid redundant writes.
 	lastCursorStyle int
+	lastCursorColor tcell.Color
 
 	// hostOSCColors caches the outer terminal's probed default fg/bg/cursor
 	// colours for theme="terminal" mode so new panes can answer OSC 10/11/12
@@ -137,7 +138,7 @@ func (app *App) shutdown() {
 		app.screen.DisableMouse()
 		// Reset cursor style to default so the host terminal isn't left
 		// with a non-default shape after bunk exits.
-		app.screen.SetCursorStyle(tcell.CursorStyleDefault)
+		app.screen.SetCursorStyle(tcell.CursorStyleDefault, tcell.ColorReset)
 		app.screen.Fini()
 	})
 }
@@ -209,7 +210,7 @@ func (app *App) reinitHost() {
 	// style — the host may have lost them, and the cache would otherwise
 	// suppress the re-emit.
 	app.lastEmittedTitle = ""
-	app.lastCursorStyle = 0
+	app.lastCursorStyle = -1
 
 	app.screen.Sync()
 	L.Info("reinitHost: host terminal re-initialised")
@@ -246,6 +247,8 @@ func (app *App) eventLoop() {
 		case *tcell.EventPaste:
 			L.Debug("event: paste", "start", ev.Start())
 			app.handlePaste(ev)
+		case *tcell.EventFocus:
+			app.handleFocus(ev.Focused)
 		}
 	}
 }
@@ -440,8 +443,9 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 		if len(active.kittyStack) > 0 {
 			kittyFlags = active.kittyStack[len(active.kittyStack)-1]
 		}
+		mode := active.term.Mode()
 		active.mu.Unlock()
-		if data := keyToBytes(ev, kittyFlags); len(data) > 0 {
+		if data := keyToBytesMode(ev, kittyFlags, mode); len(data) > 0 {
 			L.Debug("handleKey: forwarding to PTY", "pane", active.id, "bytes", len(data))
 			active.writeInput(data)
 		}
@@ -600,6 +604,7 @@ func (app *App) splitActive(inheritContext bool) {
 		app.nextID, nx, ny, nw, nh, app.scrollback, dir, spawnArgs,
 		app.paneOSCColors(),
 		app.redraw, app.paneDead, app.done, app.oscBuf,
+		app.cellAspect,
 	)
 	if err != nil {
 		L.Error("splitActive: NewPane", "err", err, "dir", dir, "spawnArgs", spawnArgs, "container", ct, "containerID", cid)
@@ -908,7 +913,7 @@ func keyToBytes(ev *tcell.EventKey, kittyFlags int) []byte {
 			cp = 9
 		case tcell.KeyBacktab:
 			cp = 9
-			km += 1 // tcell strips Shift from BackTab's modifiers; re-add it (shift=+1 in kitty)
+			km = 1 + ((km - 1) | 1) // BackTab always implies Shift
 		case tcell.KeyBackspace, tcell.KeyBackspace2:
 			cp = 127
 		case tcell.KeyEsc:
@@ -923,7 +928,7 @@ func keyToBytes(ev *tcell.EventKey, kittyFlags int) []byte {
 		// Ctrl+letter: codepoint is the lowercase letter.
 		if k >= tcell.KeyCtrlA && k <= tcell.KeyCtrlZ {
 			cp = int('a' + (k - tcell.KeyCtrlA))
-			km |= 5 // Ctrl bit
+			km = 1 + ((km - 1) | 4) // modifier parameters are one-based
 			return fmt.Appendf(nil, "\x1b[%d;%du", cp, km)
 		}
 		// Fall through to legacy for arrows, F-keys, etc. which already
@@ -931,6 +936,10 @@ func keyToBytes(ev *tcell.EventKey, kittyFlags int) []byte {
 	}
 
 	// Legacy encoding.
+	if mod&tcell.ModAlt != 0 && (k >= tcell.KeyCtrlA && k <= tcell.KeyCtrlZ || k == tcell.KeyBackspace || k == tcell.KeyBackspace2 || k == tcell.KeyEsc || k == tcell.KeyEnter || k == tcell.KeyTab) {
+		plain := tcell.NewEventKey(k, ev.Rune(), mod&^tcell.ModAlt)
+		return append([]byte{27}, keyToBytes(plain, 0)...)
+	}
 	if k >= tcell.KeyCtrlA && k <= tcell.KeyCtrlZ {
 		return []byte{byte(k-tcell.KeyCtrlA) + 1}
 	}

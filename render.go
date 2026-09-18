@@ -29,7 +29,6 @@ import (
 	"bunk/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/uniseg"
 )
 
 // vtAttr aliases — thin local shorthands for the exported vt10x constants.
@@ -48,7 +47,7 @@ const (
 	vtAttrDim                int16 = vt10x.AttrDim           // SGR 2
 	vtAttrStrikethrough      int16 = vt10x.AttrStrikethrough // SGR 9
 	vtAttrInvisible          int16 = vt10x.AttrInvisible     // SGR 8
-	vtAttrOverline           int16 = vt10x.AttrOverline      // SGR 53 — parsed/stored; tcell has no overline attr
+	vtAttrOverline           int16 = vt10x.AttrOverline      // SGR 53 — overline
 )
 
 // ---------------------------------------------------------------------------
@@ -197,19 +196,6 @@ func (app *App) render() {
 		return
 	}
 
-	// Skip rendering mid DEC 2026 sync update — avoids flushing a blank
-	// frame after \x1b[2J but before the app has drawn its content.
-	// Non-PTY events (mouse, resize, trackFgProcess) bypass readPTY's
-	// syncing guard, so we must also gate here.
-	if active != nil {
-		active.mu.Lock()
-		syncing := active.term.Mode()&vt10x.ModeSync != 0
-		active.mu.Unlock()
-		if syncing {
-			return
-		}
-	}
-
 	// Step 1 - draw pane contents.
 	drawPaneContents(app.screen, root, rt)
 
@@ -239,7 +225,7 @@ func (app *App) render() {
 		sbOff := active.sbOff
 		cur := active.term.Cursor()
 		curDisplayX := cursorDisplayX(active, cur)
-		visible := active.term.CursorVisible()
+		visible := active.term.CursorVisible() && active.term.Mode()&vt10x.ModeSync == 0
 		transientLineClear := active.transientLineClear
 		progressCursorHidden := active.progressCursorHiddenUntil.After(time.Now())
 		active.mu.Unlock()
@@ -297,32 +283,9 @@ func paneHasTransientLineClear(p *Pane) bool {
 	return v
 }
 
-// cursorDisplayX converts a vt10x cursor column to the actual screen column,
-// accounting for wide characters (emoji, CJK) earlier on the cursor's row.
-// vt10x advances one column per character, but renderPane paints wide glyphs
-// across two screen columns (tracked via displayCol).  Positioning the hardware
-// cursor at the raw vt10x column would place it one column too far left for
-// every wide char before it — e.g. after pasting an image, Copilot's "[📷 …]"
-// chip leaves the cursor one column left of the text.  Mirror renderPane's
-// width logic so the cursor lands where the glyphs were actually drawn.
-//
-// Must be called with p.mu held (it reads p.term cells).
-func cursorDisplayX(p *Pane, cur vt10x.Cursor) int {
-	cols, _ := p.term.Size()
-	displayCol := 0
-	for col := 0; col < cur.X && col < cols; col++ {
-		cell := p.term.Cell(col, cur.Y)
-		ch := cell.Char
-		if ch == 0 || cell.Mode&vtAttrInvisible != 0 {
-			ch = ' '
-		}
-		if ch != ' ' && uniseg.StringWidth(string(ch)) == 2 {
-			displayCol += 2
-		} else {
-			displayCol++
-		}
-	}
-	return displayCol
+// cursorDisplayX uses the emulator's display-cell coordinates.
+func cursorDisplayX(_ *Pane, cur vt10x.Cursor) int {
+	return cur.X
 }
 
 // closeHostHyperlink writes an OSC 8 close to w.  The render loop calls this
@@ -455,12 +418,17 @@ func (app *App) emitCursorStyle(p *Pane) {
 	}
 	p.mu.Lock()
 	style := p.term.Cursor().Shape
+	color := oscCursorColor(p.themeCursorColor)
+	if c, ok := p.term.ColorOverride(vt10x.DefaultCursor); ok {
+		color = tcell.NewRGBColor(int32(c>>16&255), int32(c>>8&255), int32(c&255))
+	}
 	p.mu.Unlock()
-	if style == app.lastCursorStyle {
+	if style == app.lastCursorStyle && color == app.lastCursorColor {
 		return
 	}
 	app.lastCursorStyle = style
-	app.screen.SetCursorStyle(tcell.CursorStyle(style))
+	app.lastCursorColor = color
+	app.screen.SetCursorStyle(tcell.CursorStyle(style), color)
 }
 
 func (app *App) paneOSCColors() hostOSCColors {
@@ -585,15 +553,6 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			}
 		}
 
-		// displayCol is the actual screen column for the next character.
-		// It differs from the vt10x column (col) whenever wide characters
-		// (emoji, CJK) have been encountered: vt10x treats every character
-		// as 1 cell wide, but those chars occupy 2 display columns in the
-		// host terminal.  Without this correction, narrow chars following a
-		// wide one would be placed 1 column too far left and overwrite the
-		// right half of the wide glyph when tcell renders them.
-		displayCol := 0
-
 		// Fetch per-row search spans once before the column loop so the
 		// inner loop does a short linear scan instead of a hash lookup per
 		// cell.
@@ -603,10 +562,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			curSpans = p.searchHL.current[vRow]
 		}
 
-		for col := 0; col < cols; col++ {
-			if displayCol >= cols {
-				break // remaining vt10x cells would overflow past the pane edge
-			}
+		for col := 0; col < min(cols, p.w-1); col++ {
 
 			// Default: theme colours for cells not populated from scrollback or
 			// the live terminal (blank rows before oldest history, and columns
@@ -615,7 +571,16 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			if cells != nil && col < len(cells) {
 				cell = cells[col]
 			} else if useTermDirect {
-				cell = p.term.Cell(col, termRow)
+				cell = p.term.RawCell(col, termRow)
+			}
+			if cell.Width == -1 {
+				continue
+			}
+			if fg, ok := p.term.ColorOverride(cell.FG); ok {
+				cell.FG = fg
+			}
+			if bg, ok := p.term.ColorOverride(cell.BG); ok {
+				cell.BG = bg
 			}
 
 			ch := cell.Char
@@ -626,23 +591,19 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			style := tcell.StyleDefault.
 				Foreground(vtColor(cell.FG, rt.fg, rt)).
 				Background(vtColor(cell.BG, rt.bg, rt))
+			if cell.Image != nil {
+				bg := vtColor(cell.BG, rt.bg, rt)
+				style = style.Foreground(imageColor(cell.Image.Top, bg)).Background(imageColor(cell.Image.Bottom, bg))
+			}
 
-			// Only apply text-decoration attributes to non-blank cells.
-			// vt10x's clear() (called for \033[K etc.) copies the full cursor
-			// attribute — including underline — to erased cells.  Per ECMA-48,
-			// erase operations should only carry the background colour, not text
-			// attributes.  Applying underline/bold/etc. to a space character
-			// would visually show an underline under blank areas, which vim
-			// triggers whenever it erases to EOL while underline is active.
-			//
-			// SGR 8 (invisible): render as space so the character is visually
-			// hidden; the cell data is still stored for copy-paste fidelity.
+			// Erased cells have no decorations, but explicitly printed spaces
+			// can be underlined/overlined. Invisible text keeps its copy data.
 			isBlank := ch == ' '
 			if cell.Mode&vtAttrInvisible != 0 {
 				ch = ' '
 				isBlank = true
 			}
-			if !isBlank {
+			if cell.Mode&vtAttrInvisible == 0 {
 				if cell.Link != 0 {
 					if url := p.term.Link(cell.Link); url != "" {
 						style = style.Url(url)
@@ -698,6 +659,9 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 				if cell.Mode&vtAttrStrikethrough != 0 {
 					style = style.StrikeThrough(true)
 				}
+				if cell.Mode&vt10x.AttrOverline != 0 {
+					style = style.Overline(true)
+				}
 			}
 			// NOTE: we do NOT apply tcell.Reverse(true) for vtAttrReverse.
 			// vt10x's setChar() pre-swaps FG/BG when attrReverse is set,
@@ -725,27 +689,21 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 				}
 			}
 
-			scr.SetContent(p.x+displayCol, p.y+row, ch, nil, style)
-
-			// Advance by actual display width.  For wide chars (emoji, CJK)
-			// the host terminal renders 2 cells; vt10x only advances 1 column,
-			// so without correction subsequent chars overwrite the wide glyph's
-			// right half.  tcell automatically sets a combining-placeholder at
-			// displayCol+1 when SetContent is called with a wide rune, so we
-			// just skip rendering there.
-			if !isBlank && uniseg.StringWidth(string(ch)) == 2 {
-				displayCol += 2
-			} else {
-				displayCol++
+			if cell.Width == 2 && col+1 >= min(cols, p.w-1) {
+				ch = ' '
+			}
+			var combining []rune
+			if ch == cell.Char {
+				combining = []rune(cell.Combining)
+			}
+			scr.SetContent(p.x+col, p.y+row, ch, combining, style)
+			if cell.Width == 2 && isBlank && col+1 < p.w-1 {
+				scr.SetContent(p.x+col+1, p.y+row, ' ', nil, style)
 			}
 		}
-		// Clear cells between the last rendered display column and the pane's
-		// visual edge (minus the scrollbar column).  This covers two cases:
-		//   1. The vt10x grid is narrower than the pane (resize coalescing).
-		//   2. Wide chars caused displayCol to reach cols before all vt10x
-		//      columns were rendered — the remaining screen columns are stale.
+		// The grid can be narrower than the pane during resize coalescing.
 		blankStyle := tcell.StyleDefault.Background(rt.bg)
-		for dc := displayCol; dc < p.w-1; dc++ {
+		for dc := cols; dc < p.w-1; dc++ {
 			scr.SetContent(p.x+dc, p.y+row, ' ', nil, blankStyle)
 		}
 	}

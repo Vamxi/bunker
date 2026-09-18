@@ -62,21 +62,19 @@ func TestParseDECRQM_OverflowRejected(t *testing.T) {
 
 func feedSplitPTYChunks(t *testing.T, p *Pane, chunks ...[]byte) {
 	t.Helper()
-	var carry []byte
+	var stream ptyStream
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	for _, chunk := range chunks {
-		combined := append(append([]byte(nil), carry...), chunk...)
-		complete, nextCarry := splitPTYChunk(combined)
+		complete := stream.scan(chunk)
 		if len(complete) > 0 {
 			p.captureAndWrite(complete)
 		}
-		carry = nextCarry
 	}
 
-	if len(carry) != 0 {
-		t.Fatalf("splitPTYChunk left %q buffered after final chunk", carry)
+	if len(stream.pending)+len(stream.utf8) != 0 {
+		t.Fatalf("PTY stream left buffered control or UTF-8 data")
 	}
 }
 
@@ -232,7 +230,9 @@ func TestSplitPTYChunk_PartialControlCarry(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			complete, carry := splitPTYChunk(tc.input)
+			var stream ptyStream
+			complete := stream.scan(tc.input)
+			carry := append(stream.pending, stream.utf8...)
 			if string(complete) != string(tc.wantComplete) {
 				t.Fatalf("complete = %q, want %q", complete, tc.wantComplete)
 			}
@@ -327,11 +327,7 @@ func TestCaptureAndWrite_SplitOSC10Response(t *testing.T) {
 	}
 }
 
-// TestCaptureAndWrite_OSC10NormalModeNoResponse verifies that OSC 10/11
-// queries in normal screen mode do NOT produce a response.  Writing a
-// response in normal mode would put OSC bytes into the PTY buffer where they
-// appear as unexpected keyboard input to programs like survey (gh auth login).
-func TestCaptureAndWrite_OSC10NormalModeNoResponse(t *testing.T) {
+func TestCaptureAndWrite_OSC10NormalModeResponse(t *testing.T) {
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
@@ -356,8 +352,9 @@ func TestCaptureAndWrite_OSC10NormalModeNoResponse(t *testing.T) {
 	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
-	if len(buf) != 0 {
-		t.Fatalf("normal-mode OSC 10/11 produced response %q, want none", string(buf))
+	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\\x1b]11;rgb:1c1c/1c1c/1f1f\x1b\\"
+	if string(buf) != want {
+		t.Fatalf("normal-mode OSC response = %q, want %q", string(buf), want)
 	}
 }
 
@@ -2008,9 +2005,10 @@ func TestKittyStack_StaleAfterExit(t *testing.T) {
 		t.Errorf("stale KKP: Enter = %q, want \\x1b[13u", gotStale)
 	}
 
-	// trackFgProcess clears the stack when the foreground PGID changes.
+	// The negotiation belongs to the exited foreground process.
 	p.mu.Lock()
-	p.kittyStack = p.kittyStack[:0]
+	p.kittyOwnerPGID = 11
+	p.clearStaleKittyMode(12)
 	p.mu.Unlock()
 
 	p.mu.Lock()

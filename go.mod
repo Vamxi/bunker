@@ -2,6 +2,9 @@ module bunk
 
 go 1.25.7
 
+// Pinned tcell with pane-safe overline and keypad input extensions.
+replace github.com/gdamore/tcell/v2 => ./third_party/tcell
+
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/creack/pty v1.1.24

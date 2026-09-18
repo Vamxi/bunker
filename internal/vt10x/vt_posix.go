@@ -20,6 +20,9 @@ func newTerminal(info TerminalInfo) *terminal {
 	t.scrollRowCb = info.scrollCb
 	t.sbClearCb = info.sbClearCb
 	t.init(info.cols, info.rows)
+	t.graphics, t.graphicsReply = info.graphics, info.graphicsReply
+	t.cellWidth, t.cellHeight = info.cellWidth, info.cellHeight
+	t.graphicsRows = info.graphicsRows
 	return t
 }
 

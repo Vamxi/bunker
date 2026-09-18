@@ -102,7 +102,7 @@ func (s *sbRing) get(i int) []vt10x.Glyph {
 func captureRow(term vt10x.Terminal, r, cols int) []vt10x.Glyph {
 	row := make([]vt10x.Glyph, cols)
 	for c := 0; c < cols; c++ {
-		row[c] = term.Cell(c, r)
+		row[c] = term.RawCell(c, r)
 	}
 	return row
 }

@@ -1,37 +1,49 @@
 package vt10x
 
 import (
+	"bunk/internal/graphics"
 	"fmt"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // STR sequences are similar to CSI sequences, but have string arguments (and
 // as far as I can tell, don't really have a name; STR is the name I took from
 // suckless which I imagine comes from rxvt or xterm).
 type strEscape struct {
-	typ  rune
-	buf  []rune
-	args []string
+	typ               rune
+	buf               []byte
+	args              []string
+	graphics, discard bool
 }
 
 func (s *strEscape) reset() {
 	s.typ = 0
 	s.buf = s.buf[:0]
 	s.args = nil
+	s.graphics, s.discard = false, false
 }
 
 func (s *strEscape) put(c rune) {
-	// TODO: improve allocs with an array backed slice; bench first
-	if len(s.buf) < 256 {
-		s.buf = append(s.buf, c)
+	if s.discard {
+		return
 	}
-	// Going by st, it is better to remain silent when the STR sequence is not
-	// ended so that it is apparent to users something is wrong. The length sanity
-	// check ensures we don't absorb the entire stream into memory.
-	// TODO: see what rxvt or xterm does
+	limit := 64 << 10
+	if s.graphics {
+		limit = graphics.MaxSequenceBytes
+	}
+	if len(s.buf)+utf8.RuneLen(c) > limit {
+		s.buf = nil
+		s.discard = true
+		return
+	}
+	s.buf = utf8.AppendRune(s.buf, c)
+	if !s.graphics && len(s.buf) <= 80 {
+		s.graphics = graphics.IsCommand(s.typ, s.buf)
+	}
 }
 
 func (s *strEscape) parse() {
@@ -58,6 +70,21 @@ func (s *strEscape) argString(i int, def string) string {
 
 func (t *State) handleSTR() {
 	s := &t.str
+	defer func() {
+		if cap(s.buf) > 64<<10 {
+			s.buf = nil
+		}
+	}()
+	if s.discard {
+		if t.graphics != nil {
+			t.graphics.Abort()
+		}
+		return
+	}
+	if s.graphics {
+		t.handleGraphics(s.typ, s.buf)
+		return
+	}
 	s.parse()
 
 	switch s.typ {

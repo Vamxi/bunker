@@ -420,8 +420,10 @@ func DefaultConfigPath() string {
 
 // LoadConfig reads the TOML config at path (empty = default), applies the
 // optional themeOverride, and returns a resolved Config ready for use.
-// Missing or unreadable config files are silently ignored.
-func LoadConfig(path, themeOverride string) Config {
+// A missing default config uses built-in defaults; explicit paths and invalid
+// files return an error before the terminal is initialized.
+func LoadConfig(path, themeOverride string) (Config, error) {
+	explicit := path != ""
 	if path == "" {
 		path = DefaultConfigPath()
 	}
@@ -431,8 +433,10 @@ func LoadConfig(path, themeOverride string) Config {
 		LogFile:  "/tmp/bunk.log",
 		LogLevel: "info",
 	}
-	if _, err := os.Stat(path); err == nil {
-		toml.DecodeFile(path, &fc) //nolint:errcheck
+	if _, err := toml.DecodeFile(path, &fc); err != nil {
+		if explicit || !os.IsNotExist(err) {
+			return Config{}, fmt.Errorf("load config %q: %w", path, err)
+		}
 	}
 
 	if themeOverride != "" {
@@ -470,7 +474,7 @@ func LoadConfig(path, themeOverride string) Config {
 		CellAspect:  fc.CellAspect,
 		Scrollback:  scrollback,
 		Keybindings: resolveKeybindings(fc.Keys),
-	}
+	}, nil
 }
 
 // resolveTheme parses all hex strings in a ThemeDef into tcell.Colors.

@@ -21,12 +21,15 @@ main.go             Entry point — calls Execute()
 cmd.go              cobra root command, run(), app initialization
 cmd_config.go       "bunk config" subcommand tree
 app.go              App struct, event loop, key handling (keyToBytes), triggerRedraw()
+input_modes.go      Application cursor/keypad encoding and host focus forwarding
 pane.go             Pane struct, PTY spawn, readPTY, captureAndWrite, scrollback capture
+ptystream.go        Bounded streaming UTF-8/control framing before PTY parsing
 render.go           render(), renderPane(), vtColor(), border/scrollbar drawing
+graphics.go         Image colour blending, virtual pixels, control-safe history trimming
 layout.go           BSP tree: Node, split/remove/resize math
 scrollback.go       sbRing ring buffer, scroll-detection algorithm
-reflow.go           Terminal reflow on resize, rawBuf replay, stripAltScreen()
-osc.go              OSC pre-scanner, passthrough of OSC 7/8/52/133 to host
+reflow.go           Reflow helpers, scroll anchoring, stripAltScreen()
+osc.go              OSC pre-scanner, passthrough of OSC 7/52/133 to host
 mouse.go            Mouse events → PTY byte sequences
 status.go           Status badges (scroll count, container, SSH, flash messages)
 search.go           In-pane text search
@@ -44,17 +47,31 @@ internal/vt10x/     Vendored VT100/ANSI emulator (fork of github.com/hinshun/vt1
   vt.go             Terminal / View interfaces, New() constructor
   vt_posix.go       terminal concrete type, Write, Parse (POSIX)
   color.go          Color type, named colour constants
+  grapheme.go       Incremental grapheme assembly and bounded cell text
+  status.go         DECRQSS setting serialization
+  graphics.go       Image-to-cell painting, Kitty placement deletion
+
+internal/graphics/ Bounded SIXEL, Kitty, and iTerm2 static image decoders
+
+third_party/tcell/  Pinned tcell v2.13.9 with overline/keypad/keycap-width patches
+                    (local go.mod replacement; see BUNK_PATCHES.md)
 
 assets/             Demo assets (gif)
 scripts/            Manual regression helper scripts
 ```
 
 Key local extensions to vendored vt10x:
-- SGR 2/8/9/53/58 and 4:N underline styles
+- SGR 2/8/9/21/53/58 and 4:N underline styles
 - `Cursor.Shape` (DECSCUSR)
 - `ModeSetPaste` (DECSET 2004), `ModeSync` (DECSET 2026)
 - `QueryPrivateMode(n)` — returns DECRQM status byte for any tracked private mode
 - Private-parameter SGR guard (`\x1b[?4m` no longer misfires as SGR 4)
+- Display-cell widths and wide-glyph continuations; `ReplaceScreen` preserves
+  terminal modes, attributes, callbacks, and hyperlink identities during reflow
+- DEC 12 cursor blink; DEC 2027 grapheme widths (enabled by default).
+  `Glyph.Combining` stores an immutable grapheme suffix, bounded to 1 KiB/cell.
+- DECRQSS reports SGR, scroll margins, and cursor style; unsupported settings
+  return a negative response. Unknown DECRQM modes return status 0, not 4.
 
 ---
 
@@ -66,11 +83,12 @@ Key local extensions to vendored vt10x:
 2. **Pane I/O** — three goroutines per pane: `readPTY` (PTY → vt10x →
    redraw), `waitForExit`, `trackFgProcess`. One shared `renderLoop` drains
    `app.redraw` (buffered 1).
-3. **Resize / reflow** — host terminal resize triggers `App.resize()`, which
-   recomputes the BSP tree and calls `Pane.reflow()` to replay `rawBuf`
-   against a new vt10x state at the new column width.
-4. **OSC passthrough** — `osc.go` pre-scans PTY bytes; OSC 7/8/52/133 are
-   forwarded to the host terminal via `app.oscCh`, never written into vt10x.
+3. **Resize / reflow** — `App.handleResize()` coalesces host resizes and
+   updates the BSP tree. `Pane.resizeAndReflow()` replays `rawBuf` into a
+   scratch grid, then replaces the live grid without resetting terminal state.
+4. **OSC passthrough** — bounded `ptyStream` framing precedes `osc.go` scanning.
+   OSC 7/52/133 reach the host through `app.oscBuf`; OSC 8 links are stored on
+   glyphs and emitted with their rendered text.
 
 **Lock ordering:** always `app.mu` before `Pane.mu`. Never acquire `app.mu`
 while holding `Pane.mu`.
@@ -80,20 +98,24 @@ while holding `Pane.mu`.
 ## Build & Run
 
 ```bash
-make check    # full validation gate (fmt → vet → build → test → lint)
+make check    # full validation gate (fmt → vet → race tests → build → lint)
 make test     # tests only (race-enabled)
 make build    # cross-compiles bin/bunk_{linux,darwin}_{amd64,arm64}
 make run      # builds local binary and opens a debug session with --trace
 ```
 
 Tests run with `-race` and are required to pass before any binary is built.
+`make test` includes the locally patched tcell module and its terminfo tests.
+The gate is serialized even with `make -j`; the project-specific test-before-
+build rule takes precedence over the generic gate ordering.
 
 Manual regression scripts (run for changes that touch the listed areas):
 - `bash terminal_features.sh text` — SGR/style changes in `render.go` or `internal/vt10x/state.go`
 - `bash terminal_features.sh colors` — ANSI/256/RGB/underline-colour changes
 - `TERMINAL_FEATURES_AUTO=1 bash terminal_features.sh cursor` — cursor-shape, width, emoji, reflow
 - `TERMINAL_FEATURES_AUTO=1 bash terminal_features.sh integration` — hyperlink, bracketed-paste, OSC 133
-- `bash terminal_features.sh queries` + `bash scripts/osc_smoke.sh` — OSC, DECRQM, capability queries, kitty-keyboard
+- `bash terminal_features.sh queries` + `bash terminal_features.sh osc` — OSC, DECRQM, capability queries, kitty-keyboard
+- `TERMINAL_FEATURES_AUTO=1 bash terminal_features.sh graphics` — image decoding, clipping, resize, scrollback
 
 ---
 
@@ -101,6 +123,8 @@ Manual regression scripts (run for changes that touch the listed areas):
 
 Config file: `~/.config/bunk/config.toml` (override with `--config`). Generate
 a documented default with `bunk config init`.
+Malformed/unreadable files and missing explicit `--config` paths fail at startup;
+a missing default file uses built-in defaults.
 
 Key fields agents may need to know about:
 - `theme` — built-in name (`terminal`, `default`, `solarized-dark`, `dracula`, `nord`) or custom palette
@@ -122,10 +146,29 @@ Key fields agents may need to know about:
   live inside `p.term`; `render()` must read them within the same `p.mu`
   acquisition so `readPTY` can't sneak in a write between the two. Guarded by
   `TestReadPTYSingleLock_ClaudeCursorRace`.
-- **vt10x treats all characters as single-width.** `renderPane` keeps a
-  separate `displayCol` counter using `uniseg.StringWidth` to advance by 2
-  for wide chars — vt10x column N ≠ screen column N when wide chars appear
-  earlier in the row.
+- **vt10x coordinates are display cells.** Wide characters occupy a lead cell
+  (`Glyph.Width == 2`) and a continuation (`-1`); `-2` marks padding before a
+  wide-character wrap. Rendering, search, and selection skip continuations.
+  Combining marks, variation selectors, and multi-codepoint emoji stay together
+  in the lead cell through render, copy, search, and reflow. Mode 2027 can switch
+  back to per-codepoint widths for legacy applications.
+- **Query replies belong to the pane.** They are generated in stream order in
+  both primary and alternate screens, including SSH/mosh panes; they are never
+  delegated to the outer terminal. Unknown host colour defaults remain unknown.
+- **Graphics are ordinary cells.** Static SIXEL, Kitty, and iTerm2 images become
+  half-block glyphs with immutable `Glyph.Image` samples. They clip, erase, scroll,
+  and reflow with the grid; source bitmaps are not retained by scrollback. No image
+  escape is forwarded to the host. Kitty file/shared-memory access is rejected.
+  PTYs and CSI 14/16/18 replies use virtual pixels (8 wide, height from cell aspect).
+  Transfers are capped at 8 MiB, decoded images at 4 million pixels / 4096 per
+  axis, and Kitty caches at 32 MiB / 32 images. Graphics-bearing raw history gets
+  a 16 MiB minimum budget and is never trimmed inside a control sequence.
+- **Cursor colour follows the active pane.** OSC 12 overrides and OSC 112 resets
+  are emitted through tcell; shutdown restores the host cursor colour.
+- **Synchronized updates are per pane.** Other panes continue repainting;
+  an abandoned update is released after one second.
+- **Kitty keyboard state belongs to its negotiating foreground process group.**
+  Polling clears it only after that owner leaves the foreground.
 - **Terminal cleanup runs synchronously in `main` after the event loop.**
   Background goroutines can't be relied on to finish their cleanup before
   the process exits.
@@ -177,7 +220,7 @@ app := &App{
     screen: scr,
     root:   &Node{pane: p},
     active: p,
-    oscCh:  make(chan []byte, oscChanSize),
+    oscBuf: newOSCBuffer(),
     theme:  testTheme(),
 }
 ```

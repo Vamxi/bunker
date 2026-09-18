@@ -379,7 +379,7 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	if isDrag && mode&(vt10x.ModeMouseMotion|vt10x.ModeMouseMany) == 0 {
 		return // app only wants clicks, not drag motion (mode 1000 only)
 	}
-	if btn == tcell.ButtonNone && mode&vt10x.ModeMouseMany == 0 {
+	if btn == tcell.ButtonNone && prevBtn == tcell.ButtonNone && mode&vt10x.ModeMouseMany == 0 {
 		return // pure no-button motion only forwarded for mode 1003
 	}
 
@@ -597,6 +597,9 @@ func selectWord(p *Pane, vPos selPos) {
 		L.Debug("selectWord: no cells at position", "pane", p.id, "vrow", vPos.row, "vcol", vPos.col)
 		return
 	}
+	if vPos.col > 0 && vPos.col < len(cells) && cells[vPos.col].Width == -1 {
+		vPos.col--
+	}
 
 	// If clicked on whitespace, clear selection.
 	if vPos.col >= len(cells) || !isWordChar(cells[vPos.col].Char) {
@@ -607,12 +610,12 @@ func selectWord(p *Pane, vPos selPos) {
 
 	// Expand left.
 	start := vPos.col
-	for start > 0 && isWordChar(cells[start-1].Char) {
+	for start > 0 && (cells[start-1].Width == -1 || isWordChar(cells[start-1].Char)) {
 		start--
 	}
 	// Expand right.
 	end := vPos.col
-	for end+1 < len(cells) && isWordChar(cells[end+1].Char) {
+	for end+1 < len(cells) && (cells[end+1].Width == -1 || isWordChar(cells[end+1].Char)) {
 		end++
 	}
 

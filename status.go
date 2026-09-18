@@ -665,6 +665,14 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 			name = procComm(pgid)
 		}
 
+		// A short-lived app can negotiate and exit between polls, leaving
+		// the same shell PGID as before. Check ownership on every tick.
+		p.mu.Lock()
+		if len(p.kittyStack) > 0 && p.kittyOwnerPGID != pgid {
+			p.clearStaleKittyMode(termFgPGID(shellPid))
+		}
+		p.mu.Unlock()
+
 		// Only re-run the expensive detection (/proc/environ, cgroup, podman
 		// inspect) when the foreground PGID actually changes.  For most ticks
 		// the foreground process is idle at the shell prompt, so this skips
@@ -674,20 +682,6 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 			lastPGID = pgid
 			ct, cn = "", ""
 			sshHost = ""
-
-			// When the foreground process changes, clear any stale kitty
-			// keyboard protocol state.  Apps (e.g. Claude Code) may enable
-			// KKP without using the alt screen, so the alt-screen-exit reset
-			// in captureAndWrite does not fire.  If they crash, are killed,
-			// or exit without sending \x1b[<u, the stack stays non-empty and
-			// bunk keeps encoding keystrokes as KKP sequences that the next
-			// shell cannot interpret.
-			p.mu.Lock()
-			if len(p.kittyStack) > 0 {
-				L.Debug("trackFgProcess: clearing stale kittyStack on pgid change", "pane", p.id, "pgid", pgid)
-				p.kittyStack = p.kittyStack[:0]
-			}
-			p.mu.Unlock()
 
 			if pgid > 0 {
 				ct, cn = detectContainerInfoFromProcEnv(pgid)
@@ -722,6 +716,14 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 		case redraw <- struct{}{}:
 		default:
 		}
+	}
+}
+
+// clearStaleKittyMode requires p.mu.
+func (p *Pane) clearStaleKittyMode(pgid int) {
+	if pgid > 0 && p.kittyOwnerPGID > 0 && pgid != p.kittyOwnerPGID {
+		p.kittyStack = p.kittyStack[:0]
+		p.kittyOwnerPGID = 0
 	}
 }
 

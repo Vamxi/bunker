@@ -30,9 +30,17 @@ done
 printf "${CSI}0 q"
 ok "Cursor reset to default"
 
+section "Cursor Blink and Colour"
+printf "${CSI}5 q${CSI}?12l${OSC}12;#ff8800${ST}  Steady orange bar "
+pause_for_input "(press Enter)" 0.3
+printf "${CSI}?12h  Blinking orange bar "
+pause_for_input "(press Enter)" 0.3
+printf "${OSC}112${ST}${CSI}0 q"
+
 section "Unicode Width and Alignment"
 printf "  CJK wide chars:   |中文日本語한국어|\n"
 printf "  Emoji sequence:   |😀 🎉 🦀 🔥 ✅ ❌|\n"
+printf "  Grapheme clusters: |é|❤️|👍🏽|🇳🇱|1️⃣|👩‍👩‍👧‍👦|\n"
 printf "  Box drawing:      ┌─┬─┐  ╔═╦═╗  ├─┼─┤\n"
 printf "                    │ │ │  ║ ║ ║  └─┴─┘\n"
 printf "  Braille spinner:  ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\n"

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
@@ -15,6 +17,23 @@ type hostOSCColors struct {
 	fg     string
 	bg     string
 	cursor string
+}
+
+func oscCursorColor(s string) tcell.Color {
+	s = normalizeOSCColorReply(s)
+	if s == "" {
+		return tcell.ColorReset
+	}
+	parts := strings.Split(strings.TrimPrefix(s, "rgb:"), "/")
+	var rgb [3]int32
+	for i, part := range parts {
+		n, err := strconv.ParseUint(part, 16, 16)
+		if err != nil {
+			return tcell.ColorReset
+		}
+		rgb[i] = int32(n * 255 / ((1 << uint(4*len(part))) - 1))
+	}
+	return tcell.NewRGBColor(rgb[0], rgb[1], rgb[2])
 }
 
 // defaultOSCColors resolves the fallback colours bunk exposes to pane apps for
