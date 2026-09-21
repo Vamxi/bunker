@@ -89,7 +89,7 @@ be queried accurately for that value. Explicit pane colour overrides remain quer
 | DSR (CSI 5 n) | Device status report | OK | CSI 0 n, including remote panes |
 | DECRQM (CSI ? Ps $ p) | Request mode | OK | Tracked modes include 12/2027; unknown modes return 0, not the permanently-reset status 4 |
 | XTVERSION (CSI > 0 q) | Terminal version | OK | Responds with DCS >|VTE(8203) ST; VTE_VERSION=8203 set in pane env; used by Claude Code, Neovim, WezTerm for feature detection |
-| XTGETTCAP (DCS + q) | Terminfo capability query | OK | Responds to Smulx/Setulc/Su (found with hex-encoded value); all others get "not found"; eliminates startup latency in apps that query capabilities |
+| XTGETTCAP (DCS + q) | Terminfo capability query | OK | Reports Smulx/Setulc/Su, TN/name, Co/colors (256), RGB (8 bits/channel), navigation/editing keys, keypad Enter, F1–F24, and modified navigation keys (Shift/Alt/Ctrl combinations). Termcap aliases are supported for unmodified keys. Key values follow current application cursor/keypad and Kitty modes; unknown names receive "not found" |
 | DECRQSS | Request setting | OK | SGR (`m`), scroll margins (`r`), and cursor style (`SP q`); unsupported settings receive DCS 0 $ r ST |
 
 ---
@@ -182,8 +182,10 @@ CSI 14/16/18 and PTY pixel sizes describe the same virtual cell geometry.
 All listed feature rows are implemented within their stated scope; this is not
 an exhaustive claim of terminal-protocol conformance.
 
-- **Capability queries:** XTGETTCAP exposes only the three capabilities listed
-  above. DECRQSS reports only implemented settings; other requests are rejected.
+- **Capability queries:** XTGETTCAP exposes the names and key families listed
+  above, not an entire terminfo database. Higher function keys and Meta modifiers
+  are not exposed. DECRQSS reports only implemented settings; other requests are
+  rejected.
   Additional replies must describe behaviour bunk actually supports.
 - **Graphics extensions:** native-pixel output, animation, layering, Unicode
   placeholders, relative placements, and non-square SIXEL pixel aspects remain
@@ -196,12 +198,20 @@ an exhaustive claim of terminal-protocol conformance.
 
 ## Completed implementation history
 
+### Capability-query expansion (2026-09-21)
+
+- XTGETTCAP reports the pane's terminal name, indexed colour count, RGB depth,
+  and supported key encodings, including termcap aliases and modified navigation.
+- Key replies use the normal input encoder with the pane's current modes and
+  Kitty flags, including mode changes earlier in the same PTY stream.
+- Replies remain pane-local in both screen modes and remote sessions; unsupported
+  settings still receive negative replies.
+
 ### Keyboard passthrough (2026-09-21)
 
 - Added per-pane Ctrl+F12 passthrough with a persistent PASS badge. Other bunk
   keyboard bindings reach the pane while enabled; the toggle remains reserved.
 - PASS shares the status layout and takes priority when badges do not fit.
-
 
 ### Reliability fixes (2026-09-17)
 

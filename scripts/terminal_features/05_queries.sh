@@ -66,6 +66,11 @@ printf '%s\n' "$r"
 expect "Found: DCS 1+r ... with the underline-color capability value"
 diagnose "If Setulc disappears, inspect underline-color capability wiring."
 
+printf '  Name / indexed colors / RGB depth: %s\n' "$(query_terminal "${DCS}+q544e;436f;524742${ST}")"
+expect "TN=xterm-256color, Co=256, RGB=8, with hex-encoded values."
+printf '  Application cursor Up: %s\n' "$(query_terminal "${CSI}?1h${DCS}+q6b63757531${ST}${CSI}?1l")"
+expect "kcuu1=1b4f41 (ESC O A) while application cursor mode is enabled."
+
 section "DECRQM"
 printf "  Query mode 2026: ^[[?2026\$p\n"
 printf "  Response:        "

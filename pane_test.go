@@ -1771,12 +1771,12 @@ func TestXTGETTCAP_Unknown(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(40, 10))
 	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
 
-	// "colors" hex-encoded = 636f6c6f7273
-	p.captureAndWrite([]byte("\x1bP+q636f6c6f7273\x1b\\"))
+	// "unknown" hex-encoded = 756e6b6e6f776e
+	p.captureAndWrite([]byte("\x1bP+q756e6b6e6f776e\x1b\\"))
 	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
-	want := "\x1bP0+r636f6c6f7273\x1b\\"
+	want := "\x1bP0+r756e6b6e6f776e\x1b\\"
 	if string(buf) != want {
 		t.Errorf("XTGETTCAP unknown cap = %q, want %q", string(buf), want)
 	}
@@ -1784,7 +1784,7 @@ func TestXTGETTCAP_Unknown(t *testing.T) {
 
 func TestXTGETTCAPResponse_Smulx(t *testing.T) {
 	// Smulx hex = 536d756c78; value = "\x1b[4:%p1%dm"
-	got := xtgettcapResponse("536d756c78")
+	got := xtgettcapResponse("536d756c78", 0, 0)
 	wantHexVal := "1b5b343a25703125646d"
 	want := "\x1bP1+r536d756c78=" + wantHexVal + "\x1b\\"
 	if got != want {
@@ -1794,7 +1794,7 @@ func TestXTGETTCAPResponse_Smulx(t *testing.T) {
 
 func TestXTGETTCAPResponse_Setulc(t *testing.T) {
 	// Setulc hex = 5365 74756c63
-	got := xtgettcapResponse("5365 74756c63")
+	got := xtgettcapResponse("5365 74756c63", 0, 0)
 	// invalid hex (space) — should return empty string (no response)
 	if got != "" {
 		t.Errorf("xtgettcapResponse(invalid hex) = %q, want \"\"", got)
@@ -1803,7 +1803,7 @@ func TestXTGETTCAPResponse_Setulc(t *testing.T) {
 
 func TestXTGETTCAPResponse_Setulc_Valid(t *testing.T) {
 	// "Setulc" hex-encoded = 5365 74756c63 without space = 536574756c63
-	got := xtgettcapResponse("536574756c63")
+	got := xtgettcapResponse("536574756c63", 0, 0)
 	if got == "" || got[2] != '1' {
 		t.Errorf("xtgettcapResponse(Setulc) should be found, got %q", got)
 	}

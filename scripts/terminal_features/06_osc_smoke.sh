@@ -114,6 +114,15 @@ main() {
     got=$(query_raw "${CSI}?2004h${CSI}?2004\$p${CSI}?2004l${CSI}?2004\$p")
     assert_eq "same-chunk DECRQM state updates" "$got" "${CSI}?2004;1\$y${CSI}?2004;2\$y"
 
+    got=$(query_raw "${DCS}+q544e;436f;524742${ST}")
+    assert_eq "XTGETTCAP name and color depth" "$got" "${DCS}1+r544e=787465726d2d323536636f6c6f72${ST}${DCS}1+r436f=323536${ST}${DCS}1+r524742=38${ST}"
+
+    got=$(query_raw "${CSI}?1h${DCS}+q6b75${ST}${CSI}?1l${DCS}+q6b75${ST}")
+    assert_eq "XTGETTCAP same-chunk cursor mode" "$got" "${DCS}1+r6b75=1b4f41${ST}${DCS}1+r6b75=1b5b41${ST}"
+
+    got=$(query_raw "${CSI}>1u${DCS}+q6b636274${ST}${CSI}<u${DCS}+q6b636274${ST}")
+    assert_eq "XTGETTCAP same-chunk Kitty negotiation" "$got" "${DCS}1+r6b636274=1b5b393b3275${ST}${DCS}1+r6b636274=1b5b5a${ST}"
+
     printf '\nSummary: PASS=%d FAIL=%d\n' "$PASS" "$FAIL"
     [[ ${FAIL} -eq 0 ]]
 }

@@ -161,6 +161,8 @@ Key fields agents may need to know about:
 - **Query replies belong to the pane.** They are generated in stream order in
   both primary and alternate screens, including SSH/mosh panes; they are never
   delegated to the outer terminal. Unknown host colour defaults remain unknown.
+  XTGETTCAP key replies use the normal input encoder with the current pane modes
+  and Kitty flags; its terminal-name reply matches the TERM exported to panes.
 - **Graphics are ordinary cells.** Static SIXEL, Kitty, and iTerm2 images become
   half-block glyphs with immutable `Glyph.Image` samples. They clip, erase, scroll,
   and reflow with the grid; source bitmaps are not retained by scrollback. No image

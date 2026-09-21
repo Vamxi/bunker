@@ -27,6 +27,7 @@ import (
 	"bunk/internal/vt10x"
 
 	"github.com/creack/pty"
+	"github.com/gdamore/tcell/v2"
 )
 
 // defaultScrollbackLines is the default maximum number of scrollback lines
@@ -224,7 +225,7 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, col
 	// auto-launching it again (prevents recursive invocation).
 	// VTE_VERSION tells apps like Neovim that we support VTE 0.78+ features:
 	// SGR 4:3 curly underline, SGR 58 colored underline, kitty keyboard protocol.
-	cmd.Env = append(filtered, "TERM=xterm-256color", "COLORTERM=truecolor", "BUNK=1", "VTE_VERSION=8203")
+	cmd.Env = append(filtered, "TERM="+paneTermName, "COLORTERM=truecolor", "BUNK=1", "VTE_VERSION=8203")
 
 	cellWidth, cellHeight := virtualCellPixels(cellAspect)
 	ptmx, err := pty.StartWithSize(cmd, paneWinsize(w-1, h, cellWidth, cellHeight))
@@ -753,8 +754,12 @@ func (p *Pane) replyTerminalQuery(q terminalQuery) {
 		p.ptmx.Write([]byte("\x1bP>|VTE(8203)\x1b\\")) //nolint:errcheck
 		L.Log(context.Background(), LevelTrace, "captureAndWrite: XTVERSION response", "pane", p.id)
 	case terminalQueryXTGETTCAP:
+		flags := 0
+		if len(p.kittyStack) > 0 {
+			flags = p.kittyStack[len(p.kittyStack)-1]
+		}
 		for _, hexCap := range strings.Split(q.payload, ";") {
-			if resp := xtgettcapResponse(hexCap); resp != "" {
+			if resp := xtgettcapResponse(hexCap, flags, p.term.Mode()); resp != "" {
 				p.ptmx.Write([]byte(resp)) //nolint:errcheck
 			}
 		}
@@ -1760,11 +1765,13 @@ func xParseColor(rrggbb string) string {
 		rrggbb[4:6], rrggbb[4:6])
 }
 
+const paneTermName = "xterm-256color"
+
 // xtgettcapResponse builds the DCS response for a single XTGETTCAP capability
 // query.  hexCap is the hex-encoded capability name as sent by the app.
 // The response is "found" (DCS 1+r...) for capabilities we implement and
 // "not found" (DCS 0+r...) for everything else.
-func xtgettcapResponse(hexCap string) string {
+func xtgettcapResponse(hexCap string, flags int, mode vt10x.ModeFlag) string {
 	capBytes, err := hex.DecodeString(hexCap)
 	if err != nil || len(capBytes) == 0 {
 		return ""
@@ -1777,10 +1784,92 @@ func xtgettcapResponse(hexCap string) string {
 		"Smulx":  "\x1b[4:%p1%dm",
 		"Setulc": "\x1b[58:2::%p1%d:%p2%d:%p3%dm",
 		"Su":     "\x1b[4:%p1%dm",
+		"TN":     paneTermName,
+		"name":   paneTermName,
+		"Co":     "256",
+		"colors": "256",
+		"RGB":    "8",
 	}
-	if val, ok := caps[string(capBytes)]; ok {
+	name := string(capBytes)
+	val, ok := caps[name]
+	if !ok {
+		if ev := capabilityKey(name); ev != nil {
+			val = string(keyToBytesMode(ev, flags, mode))
+			ok = val != ""
+		}
+	}
+	if ok {
 		hexVal := hex.EncodeToString([]byte(val))
 		return "\x1bP1+r" + hexCap + "=" + hexVal + "\x1b\\"
 	}
 	return "\x1bP0+r" + hexCap + "\x1b\\"
+}
+
+// capabilityKey maps terminfo/termcap names to the same events used for input.
+// Replies therefore follow the pane's negotiated modes, not the outer terminal.
+func capabilityKey(name string) *tcell.EventKey {
+	for _, entry := range []struct {
+		info, cap string
+		key       tcell.Key
+	}{
+		{"kcuu1", "ku", tcell.KeyUp}, {"kcud1", "kd", tcell.KeyDown},
+		{"kcub1", "kl", tcell.KeyLeft}, {"kcuf1", "kr", tcell.KeyRight},
+		{"khome", "kh", tcell.KeyHome}, {"kend", "@7", tcell.KeyEnd},
+		{"kich1", "kI", tcell.KeyInsert}, {"kdch1", "kD", tcell.KeyDelete},
+		{"kpp", "kP", tcell.KeyPgUp}, {"knp", "kN", tcell.KeyPgDn},
+		{"kbs", "kb", tcell.KeyBackspace2}, {"kcbt", "kB", tcell.KeyBacktab},
+	} {
+		if name == entry.info || name == entry.cap {
+			return tcell.NewEventKey(entry.key, 0, 0)
+		}
+	}
+	if name == "kent" || name == "@8" {
+		return tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModKeypad)
+	}
+	for n := 1; n <= 24; n++ {
+		capName := ""
+		switch {
+		case n < 10:
+			capName = fmt.Sprintf("k%d", n)
+		case n == 10:
+			capName = "k;"
+		case n < 20:
+			capName = "F" + string(rune('1'+n-11))
+		default:
+			capName = "F" + string(rune('A'+n-20))
+		}
+		if name == fmt.Sprintf("kf%d", n) || name == capName {
+			return tcell.NewEventKey(tcell.KeyF1+tcell.Key(n-1), 0, 0)
+		}
+	}
+	for _, entry := range []struct {
+		name string
+		key  tcell.Key
+	}{
+		{"kUP", tcell.KeyUp}, {"kDN", tcell.KeyDown},
+		{"kLFT", tcell.KeyLeft}, {"kRIT", tcell.KeyRight},
+		{"kHOM", tcell.KeyHome}, {"kEND", tcell.KeyEnd},
+		{"kIC", tcell.KeyInsert}, {"kDC", tcell.KeyDelete},
+		{"kPRV", tcell.KeyPgUp}, {"kNXT", tcell.KeyPgDn},
+	} {
+		modifier := 2
+		if name != entry.name {
+			if len(name) != len(entry.name)+1 || !strings.HasPrefix(name, entry.name) || name[len(name)-1] < '2' || name[len(name)-1] > '8' {
+				continue
+			}
+			modifier = int(name[len(name)-1] - '0')
+		}
+		var mod tcell.ModMask
+		if (modifier-1)&1 != 0 {
+			mod |= tcell.ModShift
+		}
+		if (modifier-1)&2 != 0 {
+			mod |= tcell.ModAlt
+		}
+		if (modifier-1)&4 != 0 {
+			mod |= tcell.ModCtrl
+		}
+		return tcell.NewEventKey(entry.key, 0, mod)
+	}
+	return nil
 }
