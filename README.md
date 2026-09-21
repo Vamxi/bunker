@@ -51,6 +51,7 @@ fi
 |-----|--------|
 | `F1` | Split pane (taller than wide → splits top/bottom; wider than tall → splits left/right) |
 | `Alt+F1` | Split with a new shell in the same context (SSH / container / sudo) |
+| `Ctrl+F12` | Toggle keyboard passthrough for the active pane |
 | `F12` | Toggle fullscreen zoom |
 | `Alt+←↑→↓` | Navigate between panes |
 | `Shift+PgUp` / `Shift+PgDn` | Scroll history |
@@ -63,6 +64,11 @@ fi
 | Mouse drag | Select text (hold Shift to override app mouse mode) |
 | Double-click | Select word |
 | Drag to edge | Auto-scroll into history while selecting |
+
+With passthrough enabled, all keyboard shortcuts except the passthrough toggle
+reach the application, including F1, Alt+arrows, and Ctrl+Q. Mouse controls
+remain available. Each pane remembers its own mode; new panes start with it off.
+Remap the toggle with `passthrough` in `[keys]`.
 
 ## Context-aware splitting (`Alt+F1`)
 
@@ -80,6 +86,7 @@ Shown in the top-right corner of each pane:
 | `▣ my-toolbox` | Toolbox or Distrobox container |
 | `⇄ myserver.com` | SSH session |
 | `sudo` / `su` | Elevated shell |
+| `PASS` | Keyboard passthrough enabled (`Ctrl+F12` to disable); takes priority when badges do not fit |
 | `ZOOM` | Pane is in fullscreen zoom mode (`F12`) |
 | `-42` | Scrolled back 42 lines |
 | `COPIED` | Selection copied to clipboard |

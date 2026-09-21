@@ -140,6 +140,12 @@ Key fields agents may need to know about:
 
 ## Design Decisions
 
+- **Keyboard passthrough is per pane.** Ctrl+F12 (`[keys].passthrough`) toggles
+  forwarding of all other keys through the normal terminal encoder. The toggle
+  remains reserved and exits bunk search. Mouse handling is unchanged. The PASS
+  badge shares the status layout, takes highest priority, and invalidates the
+  render overlay when toggled.
+
 - **PTY is one column narrower than the pane.** The rightmost column
   (`p.x + p.w - 1`) is reserved for the scrollbar; the PTY never writes there.
 - **Cursor shape and cell content must be read under the same lock.** Both

@@ -749,7 +749,8 @@ func drawAllPaneStatus(scr tcell.Screen, n *Node, active *Pane, rt resolvedTheme
 // p.mu must be held by the caller.
 func statusOverlayKeyLocked(p *Pane, now time.Time) string {
 	tempActive := !p.statusMsgEnd.IsZero() && now.Before(p.statusMsgEnd) && p.statusMsg != ""
-	return fmt.Sprintf("%t|%s|%s|%s|%s|%s",
+	return fmt.Sprintf("%t|%t|%s|%s|%s|%s|%s",
+		p.passthrough,
 		tempActive,
 		p.statusMsg,
 		p.fgProcess,
@@ -761,10 +762,11 @@ func statusOverlayKeyLocked(p *Pane, now time.Time) string {
 
 // drawPaneStatus draws compact status badges in the top-right corner of
 // pane p.  Badges are drawn right-to-left so the highest-priority badge
-// (scroll count) is closest to the edge and always visible.
+// (passthrough, then scroll count) is closest to the edge and always visible.
 //
 // Badge order (right to left):
 //
+//	[ PASS ]                - keyboard passthrough (toggle remains reserved)
 //	[-N]                    - scrollback line count (yellow on black)
 //	[ COPIED ]              - temporary flash message (white on green)
 //	[⬡ my-toolbox]          - container/sudo/ssh context badge
@@ -778,6 +780,7 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, 
 	tempMsg := p.statusMsg
 	tempActive := !p.statusMsgEnd.IsZero() && time.Now().Before(p.statusMsgEnd)
 	sshHost := p.sshHost
+	passthrough := p.passthrough
 	p.mu.Unlock()
 
 	// Badge colors derived from the theme palette so they adapt automatically.
@@ -869,11 +872,18 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, 
 		}
 	}
 
-	// 3. Scroll line count (rightmost, always visible when scrolled back).
+	// 3. Scroll line count (below passthrough in priority).
 	if sbOff > 0 {
 		badges = append(badges, badge{
 			fmt.Sprintf(" -%d ", sbOff),
 			tcell.StyleDefault.Foreground(colorYellow).Background(colorDark).Bold(true),
+		})
+	}
+
+	if passthrough {
+		badges = append(badges, badge{
+			" PASS ",
+			tcell.StyleDefault.Foreground(badgeText).Background(colorCyan).Bold(true),
 		})
 	}
 

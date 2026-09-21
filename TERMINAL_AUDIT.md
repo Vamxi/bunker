@@ -112,7 +112,12 @@ Highest impact: XTVERSION (feature detection by newer apps).
 | Modified Home/End/etc | OK | Ctrl+Home, Shift+End, Ctrl+Delete etc. forwarded with xterm modifier parameter |
 | Keypad keys | OK (host-dependent) | Keypad identity survives SS3/Kitty input; digits/operators/Enter use application-keypad SS3 or CSI-u. Hosts sending ordinary digit/Enter bytes cannot identify their physical origin |
 
-> **Note:** Any key bound to a bunk action in the user's config is intercepted and not forwarded to the PTY. Default consumed keys: F1 (split), Alt+F1 (split-context), F12 (zoom), Alt+arrows (pane nav), Shift+PgUp/PgDn (scrollback), Ctrl+C (copy/forward), Ctrl+V (paste), Ctrl+Q (quit), Ctrl+F (search), Ctrl+N (search-next). All of these are user-remappable.
+> **Passthrough:** Ctrl+F12 (remappable as `[keys].passthrough`) toggles per-pane
+> keyboard passthrough. All keys except the toggle reach the child application
+> using its negotiated encoding. PASS shares the badge layout with highest
+> priority; mouse controls remain available.
+
+> **Note:** Outside passthrough mode, any key bound to a bunk action in the user's config is intercepted and not forwarded to the PTY. Default consumed keys: F1 (split), Alt+F1 (split-context), F12 (zoom), Alt+arrows (pane nav), Shift+PgUp/PgDn (scrollback), Ctrl+C (copy/forward), Ctrl+V (paste), Ctrl+Q (quit), Ctrl+F (search), Ctrl+N (search-next). All of these are user-remappable.
 
 Highest impact: SGR 58 (underline colour) for neovim LSP diagnostics colour-coding.
 

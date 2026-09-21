@@ -187,6 +187,7 @@ type Keybindings struct {
 	Copy         Keybinding
 	Paste        Keybinding
 	Search       Keybinding
+	Passthrough  Keybinding
 	Zoom         Keybinding
 	NavUp        Keybinding
 	NavDown      Keybinding
@@ -211,6 +212,7 @@ type kbEntry struct {
 }
 
 var keybindingDefaults = []kbEntry{
+	{"passthrough", func(k *Keybindings) *Keybinding { return &k.Passthrough }, "ctrl+f12", "Toggle keyboard passthrough for the active pane (PASS badge)"},
 	{"split", func(k *Keybindings) *Keybinding { return &k.Split }, "f1", "Auto-split the active pane (vertical if wide, horizontal if tall)"},
 	{"split_context", func(k *Keybindings) *Keybinding { return &k.SplitContext }, "alt+f1", "Split inheriting container / SSH / sudo context"},
 	{"zoom", func(k *Keybindings) *Keybinding { return &k.Zoom }, "f12", "Toggle fullscreen zoom on the active pane"},
@@ -559,6 +561,7 @@ quit         = "ctrl+q"      # quit bunk
 copy         = "ctrl+c"      # copy selection (if active); otherwise forwards to shell
 paste        = "ctrl+v"      # paste from clipboard
 search       = "ctrl+f"      # enter incremental search
+passthrough  = "ctrl+f12"    # forward all keys except this toggle to the active pane
 zoom         = "f12"         # toggle fullscreen zoom on the active pane
 nav_up       = "alt+up"      # move focus to the pane above
 nav_down     = "alt+down"    # move focus to the pane below

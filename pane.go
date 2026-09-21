@@ -165,6 +165,8 @@ type Pane struct {
 	kittyStack     []int
 	kittyOwnerPGID int
 
+	passthrough bool // protected by mu
+
 	// Temporary status message (e.g. "COPIED") shown in the status bar.
 	// Clears automatically after statusMsgEnd.  Protected by mu.
 	statusMsg    string

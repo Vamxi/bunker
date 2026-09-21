@@ -305,6 +305,30 @@ func (app *App) handleResize() {
 
 // handleKey routes a key event.  Returns false to initiate a clean shutdown.
 func (app *App) handleKey(ev *tcell.EventKey) bool {
+	app.mu.Lock()
+	pane := app.active
+	passthrough := false
+	if pane != nil {
+		pane.mu.Lock()
+		if app.keys.Passthrough.Matches(ev) {
+			pane.passthrough = !pane.passthrough
+		}
+		passthrough = pane.passthrough
+		pane.mu.Unlock()
+	}
+	app.mu.Unlock()
+	if app.keys.Passthrough.Matches(ev) {
+		if app.searchMode {
+			app.exitSearch()
+		}
+		L.Debug("handleKey: passthrough", "enabled", passthrough)
+		app.triggerRedraw()
+		return true
+	}
+	if passthrough {
+		app.forwardKey(ev)
+		return true
+	}
 	if app.searchMode {
 		return app.handleSearchKey(ev)
 	}
@@ -418,9 +442,13 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 		return true
 	}
 
-	// Forward everything else to the focused pane's PTY.
+	app.forwardKey(ev)
+	return true
+}
+
+func (app *App) forwardKey(ev *tcell.EventKey) {
 	app.mu.Lock()
-	active = app.active
+	active := app.active
 	app.mu.Unlock()
 	if active != nil && !active.isDead() {
 		needRedraw := false
@@ -450,7 +478,6 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 			active.writeInput(data)
 		}
 	}
-	return true
 }
 
 // ---------------------------------------------------------------------------
