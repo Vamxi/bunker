@@ -1,9 +1,10 @@
 # Bunk Terminal Feature Audit
 
-Date: 2026-03-12 (updated 2026-09-18)
+Date: 2026-03-12 (updated 2026-09-21)
 
 ## Legend
 - **OK** — fully handled
+- **FIXED** — implemented; notes retain the regression history
 - **PARTIAL** — works but incomplete
 - **MISSING** — not implemented, will break or degrade apps that use it
 - **N/A** — not feasible in a multiplexer (inherent limitation)
@@ -91,8 +92,6 @@ be queried accurately for that value. Explicit pane colour overrides remain quer
 | XTGETTCAP (DCS + q) | Terminfo capability query | OK | Responds to Smulx/Setulc/Su (found with hex-encoded value); all others get "not found"; eliminates startup latency in apps that query capabilities |
 | DECRQSS | Request setting | OK | SGR (`m`), scroll margins (`r`), and cursor style (`SP q`); unsupported settings receive DCS 0 $ r ST |
 
-Highest impact: XTVERSION (feature detection by newer apps).
-
 ---
 
 ## 5. Key Encoding
@@ -105,10 +104,10 @@ Highest impact: XTVERSION (feature detection by newer apps).
 | Arrow keys | OK | |
 | Shift+Tab (BackTab) | **FIXED** | Was sending `\x1b[9;3u` (Alt+Tab) in kitty mode; now correctly `\x1b[9;2u` |
 | Kitty keyboard protocol | **FIXED** | Push/pop/query stack; CSI u encoding for Enter, Tab, Backspace, Ctrl+letter. Fixed: stale stack after non-alt-screen KKP app exits without `\x1b[<u` — cleared by `trackFgProcess` on PGID change. Fixed: set-flags form `\x1b[=<flags>;<mode>u` (two params) was not stripped — the `;` broke the single-digit scan, leaking the sequence to vt10x which read the trailing `u` as DECRC, corrupting cursor-relative drawing (e.g. Copilot CLI welcome screen / mascot) |
-| F1–F12 | OK | Any key bound to a bunk action (default: F1=split, F12=zoom) is consumed and not forwarded; this is config-dependent |
+| F1–F12 | OK | Any key bound to a bunk action (default: F1=split, F12=zoom) is consumed outside passthrough mode; bindings are configurable |
 | F13-F24 | OK | Shift+F1-F12; handled both via `KeyF13`–`KeyF24` and via `KeyF1`+`ModShift` modifier path |
-| Home/End/PgUp/PgDn/Ins/Del | OK | All modifiers forwarded as `\x1b[<code>;<mod>~` / `\x1b[1;<mod>H/F`; Shift+PgUp/PgDn consumed by default for scrollback (config-dependent) |
-| Modified arrows (Ctrl+Up etc) | OK | Forwarded as `\x1b[1;<mod>A/B/C/D`; Alt+arrows consumed by default for pane nav (config-dependent) |
+| Home/End/PgUp/PgDn/Ins/Del | OK | All modifiers forwarded as `\x1b[<code>;<mod>~` / `\x1b[1;<mod>H/F`; Shift+PgUp/PgDn consumed by default for scrollback outside passthrough mode (config-dependent) |
+| Modified arrows (Ctrl+Up etc) | OK | Forwarded as `\x1b[1;<mod>A/B/C/D`; Alt+arrows consumed by default for pane nav outside passthrough mode (config-dependent) |
 | Modified Home/End/etc | OK | Ctrl+Home, Shift+End, Ctrl+Delete etc. forwarded with xterm modifier parameter |
 | Keypad keys | OK (host-dependent) | Keypad identity survives SS3/Kitty input; digits/operators/Enter use application-keypad SS3 or CSI-u. Hosts sending ordinary digit/Enter bytes cannot identify their physical origin |
 
@@ -117,9 +116,7 @@ Highest impact: XTVERSION (feature detection by newer apps).
 > using its negotiated encoding. PASS shares the badge layout with highest
 > priority; mouse controls remain available.
 
-> **Note:** Outside passthrough mode, any key bound to a bunk action in the user's config is intercepted and not forwarded to the PTY. Default consumed keys: F1 (split), Alt+F1 (split-context), F12 (zoom), Alt+arrows (pane nav), Shift+PgUp/PgDn (scrollback), Ctrl+C (copy/forward), Ctrl+V (paste), Ctrl+Q (quit), Ctrl+F (search), Ctrl+N (search-next). All of these are user-remappable.
-
-Highest impact: SGR 58 (underline colour) for neovim LSP diagnostics colour-coding.
+> **Note:** Outside passthrough mode, any key bound to a bunk action in the user's config is intercepted and not forwarded to the PTY. Default consumed keys: Ctrl+F12 (passthrough toggle, also reserved during passthrough), F1 (split), Alt+F1 (split-context), F12 (zoom), Alt+arrows (pane nav), Shift+PgUp/PgDn (scrollback), Ctrl+C (copy/forward), Ctrl+V (paste), Ctrl+Q (quit), Ctrl+F (search), Ctrl+N (search-next). All of these are user-remappable.
 
 ---
 
@@ -180,7 +177,31 @@ CSI 14/16/18 and PTY pixel sizes describe the same virtual cell geometry.
 
 ---
 
-## Priority Implementation Plan
+## Remaining scope and limitations
+
+All listed feature rows are implemented within their stated scope; this is not
+an exhaustive claim of terminal-protocol conformance.
+
+- **Capability queries:** XTGETTCAP exposes only the three capabilities listed
+  above. DECRQSS reports only implemented settings; other requests are rejected.
+  Additional replies must describe behaviour bunk actually supports.
+- **Graphics extensions:** native-pixel output, animation, layering, Unicode
+  placeholders, relative placements, and non-square SIXEL pixel aspects remain
+  unsupported. Native-pixel output requires a different rendering approach.
+- **Host dependencies:** unknown default colours, physical keypad identity when
+  the host sends ordinary keys, and font/emoji shaping cannot be recovered from
+  information the host does not provide.
+- **Intentional bounds:** transfer, image, cache, and replay limits remain part
+  of the design. Kitty file/shared-memory access is intentionally rejected.
+
+## Completed implementation history
+
+### Keyboard passthrough (2026-09-21)
+
+- Added per-pane Ctrl+F12 passthrough with a persistent PASS badge. Other bunk
+  keyboard bindings reach the pane while enabled; the toggle remains reserved.
+- PASS shares the status layout and takes priority when badges do not fit.
+
 
 ### Reliability fixes (2026-09-17)
 
