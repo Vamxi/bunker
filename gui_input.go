@@ -76,11 +76,26 @@ func (v *termView) keyPressed(keyval, _ uint, state gdk.ModifierType) bool {
 	ctrl := state&gdk.ControlMask != 0
 	shift := state&gdk.ShiftMask != 0
 
-	// Ctrl+, opens Preferences (GNOME convention). Handled here because the
+	// Window actions (GNOME Terminal conventions). Handled here because the
 	// terminal consumes keys before the window's accelerators see them.
-	if ctrl && !shift && keyval == gdk.KEY_comma {
-		v.ActivateAction("win.preferences", nil)
-		return true
+	if ctrl {
+		action := ""
+		switch lower := gdk.KeyvalToLower(keyval); {
+		case !shift && keyval == gdk.KEY_comma:
+			action = "win.preferences"
+		case shift && lower == gdk.KEY_t:
+			action = "win.new-tab"
+		case shift && lower == gdk.KEY_w:
+			action = "win.close-tab"
+		case !shift && (keyval == gdk.KEY_Page_Down || keyval == gdk.KEY_KP_Page_Down):
+			action = "win.next-tab"
+		case !shift && (keyval == gdk.KEY_Page_Up || keyval == gdk.KEY_KP_Page_Up):
+			action = "win.prev-tab"
+		}
+		if action != "" {
+			v.ActivateAction(action, nil)
+			return true
+		}
 	}
 
 	// Terminal-level shortcuts (kitty/GNOME conventions: Ctrl+Shift+…).

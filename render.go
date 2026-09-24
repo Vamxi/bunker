@@ -328,32 +328,7 @@ func (app *App) emitTitle(active *Pane) {
 	if active == nil {
 		return
 	}
-	active.mu.Lock()
-	title := active.term.Title()
-	fgProc := active.fgProcess
-	active.mu.Unlock()
-
-	if title == "" {
-		// Construct a basic title from process + cwd.
-		cwd := active.cwd()
-		if cwd != "" {
-			// Show only the last two path components to keep it short.
-			parts := strings.Split(strings.TrimRight(cwd, "/"), "/")
-			if len(parts) > 2 {
-				cwd = "…/" + parts[len(parts)-2] + "/" + parts[len(parts)-1]
-			}
-		}
-		switch {
-		case fgProc != "" && cwd != "":
-			title = fgProc + ": " + cwd
-		case cwd != "":
-			title = cwd
-		case fgProc != "":
-			title = fgProc
-		default:
-			title = "bunk"
-		}
-	}
+	title := paneDisplayTitle(active, "bunk")
 
 	// Append [active/total] when there are multiple panes.
 	if app.root != nil {
@@ -383,6 +358,35 @@ func (app *App) emitTitle(active *Pane) {
 	app.lastEmittedTitle = title
 	// OSC 0 sets both icon name and window title; BEL-terminated.
 	os.Stdout.Write([]byte("\x1b]0;" + title + "\x07")) //nolint:errcheck
+}
+
+// paneDisplayTitle is the title the pane's program set (OSC 0/1/2), or else
+// "<foreground process>: <last two cwd components>", or fallback.
+func paneDisplayTitle(p *Pane, fallback string) string {
+	p.mu.Lock()
+	title := p.term.Title()
+	fgProc := p.fgProcess
+	p.mu.Unlock()
+	if title != "" {
+		return title
+	}
+	cwd := p.cwd()
+	if cwd != "" {
+		// Show only the last two path components to keep it short.
+		parts := strings.Split(strings.TrimRight(cwd, "/"), "/")
+		if len(parts) > 2 {
+			cwd = "…/" + parts[len(parts)-2] + "/" + parts[len(parts)-1]
+		}
+	}
+	switch {
+	case fgProc != "" && cwd != "":
+		return fgProc + ": " + cwd
+	case cwd != "":
+		return cwd
+	case fgProc != "":
+		return fgProc
+	}
+	return fallback
 }
 
 // sanitizeTitle keeps only printable runes (no C0/C1 controls), validates

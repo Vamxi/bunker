@@ -1,9 +1,9 @@
 // gui.go - bunker's GTK4 application shell.
 //
-// runGUI owns the GTK main loop. Panes, PTYs, and emulation are bunk's; the
-// App struct is reused as the pane model (root, active, redraw, done) with no
-// tcell screen attached. GTK calls stay on the main thread: background
-// goroutines only reach it through glib.IdleAdd.
+// runGUI owns the GTK main loop. Panes, PTYs, and emulation are bunk's; each
+// tab reuses an App struct as its pane model (root, active, redraw, done)
+// with no tcell screen attached. GTK calls stay on the main thread:
+// background goroutines only reach it through glib.IdleAdd.
 //
 // guiWin owns the config for its window: the TOML file is the source of
 // truth. Settings writes single keys into it (see tomledit.go), a directory
@@ -36,9 +36,15 @@ const (
 // guiWin is one bunker window and the config that drives it.
 type guiWin struct {
 	gapp *gtk.Application
-	app  *App
 	win  *gtk.ApplicationWindow
-	view *termView
+
+	tabs        []*guiTab
+	active      *guiTab
+	stack       *gtk.Stack
+	strip       *gtk.Box
+	stripScroll *gtk.ScrolledWindow
+	layout      *gtk.Box
+	tabsCSS     *gtk.CSSProvider
 
 	cfg           Config
 	configPath    string // "" = default location
@@ -52,7 +58,7 @@ type guiWin struct {
 }
 
 // runGUI starts the GTK application. command, when non-empty, replaces the
-// login shell in the first pane.
+// login shell in the first tab.
 func runGUI(configPath, themeName string, debug, trace bool, command []string) error {
 	cfg, err := LoadConfig(configPath, themeName)
 	if err != nil {
@@ -74,31 +80,21 @@ func runGUI(configPath, themeName string, debug, trace bool, command []string) e
 	cfg = guiConfig(cfg)
 	L.Info("bunker starting", "config", cfg.Path, "font", cfg.Font, "log_level", logLevel)
 
-	app := &App{
-		theme:           cfg.Theme,
-		keys:            cfg.Keybindings,
-		scrollback:      cfg.Scrollback,
-		scrollbackBytes: cfg.ScrollbackBytes,
-		redraw:          make(chan struct{}, 1),
-		paneDead:        make(chan *Pane, 8),
-		done:            make(chan struct{}),
-		oscBuf:          newOSCBuffer(),
-	}
-
 	stopProfile := guiStartProfile()
 	defer stopProfile()
 
+	var windows []*guiWin
 	gapp := gtk.NewApplication(guiAppID, gio.ApplicationNonUnique)
 	gapp.ConnectActivate(func() {
-		gw := &guiWin{gapp: gapp, app: app, cfg: cfg, configPath: configPath, themeOverride: themeName}
+		gw := &guiWin{gapp: gapp, cfg: cfg, configPath: configPath, themeOverride: themeName}
+		windows = append(windows, gw)
 		gw.build(command)
 	})
 	code := gapp.Run([]string{os.Args[0]})
 
-	app.shutOnce.Do(func() {
-		app.closeAllPanes()
-		close(app.done)
-	})
+	for _, gw := range windows {
+		gw.closeAllTabs()
+	}
 	if code != 0 {
 		stopProfile()
 		os.Exit(code)
@@ -121,8 +117,10 @@ func guiConfig(cfg Config) Config {
 }
 
 func (gw *guiWin) build(command []string) {
-	app := gw.app
 	guiInstallCSS()
+	gw.tabsCSS = gtk.NewCSSProvider()
+	gw.tabsCSS.LoadFromString(tabsCSS(gw.cfg.Theme))
+	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), gw.tabsCSS, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 	gw.applyDarkPreference()
 
 	win := gtk.NewApplicationWindow(gw.gapp)
@@ -130,39 +128,14 @@ func (gw *guiWin) build(command []string) {
 	gw.win = win
 	gw.installActions()
 	win.SetTitlebar(gw.headerBar())
+	win.ConnectCloseRequest(func() bool {
+		gw.closeAllTabs()
+		return false
+	})
 
-	view := newTermView(app, gw.cfg)
-	gw.view = view
-	view.win = win
-	view.onTitle = func(title string) {
-		if title == "" {
-			title = "bunker"
-		}
-		win.SetTitle(title)
-	}
-	view.onSpawn = func(cols, rows int) (*Pane, error) {
-		// Pane widths include bunk's reserved scrollbar column.
-		p, err := NewPane(app.nextID, 0, 0, cols+1, rows, app.scrollback, app.scrollbackBytes, "", command,
-			app.paneOSCColors(), app.redraw, app.paneDead, app.done, app.oscBuf,
-			view.cellH/view.cellW)
-		if err != nil {
-			return nil, err
-		}
-		app.mu.Lock()
-		app.nextID++
-		app.root = newLeaf(p, 0, 0, cols+1, rows)
-		app.active = p
-		app.mu.Unlock()
-		if view.focused {
-			sendFocusIn(p)
-		}
-		view.requestDraw()
-		return p, nil
-	}
-
-	// The banner floats over the terminal for config errors.
+	// The banner floats over the terminal area for config errors.
 	overlay := gtk.NewOverlay()
-	overlay.SetChild(view)
+	overlay.SetChild(gw.buildLayout())
 	gw.banner = gtk.NewLabel("")
 	gw.banner.AddCSSClass("bunker-banner")
 	gw.banner.SetWrap(true)
@@ -176,10 +149,23 @@ func (gw *guiWin) build(command []string) {
 	dismiss.ConnectPressed(func(int, float64, float64) { gw.banner.SetVisible(false) })
 	gw.banner.AddController(dismiss)
 	overlay.AddOverlay(gw.banner)
-
 	win.SetChild(overlay)
+
+	gw.newTab("", command)
 	win.Present()
-	view.GrabFocus()
+	// Debug-only extra tabs open once the first tab has a size.
+	if extras := guiDebugExtraTabs(); len(extras) > 0 {
+		coreglib.TimeoutAdd(300, func() bool {
+			for _, extra := range extras {
+				gw.newTab("", extra)
+			}
+			return false
+		})
+	}
+	if gw.active != nil {
+		gw.active.view.GrabFocus()
+	}
+
 	if os.Getenv("BUNKER_OPEN") == "preferences" {
 		gw.openSettings()
 	}
@@ -190,20 +176,12 @@ func (gw *guiWin) build(command []string) {
 		return &win.Window
 	})
 	gw.watchConfig()
-
-	go guiRedrawBridge(app, view)
-	go func() {
-		select {
-		case p := <-app.paneDead:
-			L.Info("gui: shell exited, closing window", "pane", p.id)
-			coreglib.IdleAdd(func() { win.Close() })
-		case <-app.done:
-		}
-	}()
+	gw.pollTitles()
 }
 
 func (gw *guiWin) headerBar() *gtk.HeaderBar {
 	menu := gio.NewMenu()
+	menu.Append("New Tab", "win.new-tab")
 	menu.Append("Preferences", "win.preferences")
 	menu.Append("Open Config File", "win.open-config")
 	button := gtk.NewMenuButton()
@@ -212,21 +190,36 @@ func (gw *guiWin) headerBar() *gtk.HeaderBar {
 	button.SetTooltipText("Main Menu")
 	button.SetFocusOnClick(false)
 
+	newTab := gtk.NewButtonFromIconName("tab-new-symbolic")
+	newTab.SetTooltipText("New Tab (Ctrl+Shift+T)")
+	newTab.SetFocusOnClick(false)
+	newTab.SetActionName("win.new-tab")
+
 	bar := gtk.NewHeaderBar()
+	bar.PackStart(newTab)
 	bar.PackEnd(button)
 	return bar
 }
 
 func (gw *guiWin) installActions() {
-	prefs := gio.NewSimpleAction("preferences", nil)
-	prefs.ConnectActivate(func(*glib.Variant) { gw.openSettings() })
-	gw.win.AddAction(prefs)
-
-	open := gio.NewSimpleAction("open-config", nil)
-	open.ConnectActivate(func(*glib.Variant) { gw.openConfigFile() })
-	gw.win.AddAction(open)
-
-	gw.gapp.SetAccelsForAction("win.preferences", []string{"<Control>comma"})
+	add := func(name string, accels []string, fn func()) {
+		a := gio.NewSimpleAction(name, nil)
+		a.ConnectActivate(func(*glib.Variant) { fn() })
+		gw.win.AddAction(a)
+		if len(accels) > 0 {
+			gw.gapp.SetAccelsForAction("win."+name, accels)
+		}
+	}
+	add("preferences", []string{"<Control>comma"}, gw.openSettings)
+	add("open-config", nil, gw.openConfigFile)
+	add("new-tab", []string{"<Control><Shift>t"}, func() { gw.newTab(gw.activeCwd(), nil) })
+	add("close-tab", []string{"<Control><Shift>w"}, func() {
+		if gw.active != nil {
+			gw.closeTab(gw.active)
+		}
+	})
+	add("next-tab", []string{"<Control>Page_Down"}, func() { gw.selectRelative(1) })
+	add("prev-tab", []string{"<Control>Page_Up"}, func() { gw.selectRelative(-1) })
 }
 
 // ---------------------------------------------------------------------------
@@ -306,40 +299,45 @@ func (gw *guiWin) reload() {
 	gw.apply(guiConfig(cfg))
 }
 
-// apply pushes a config into the running window.
+// apply pushes a config into the running window and every tab.
 func (gw *guiWin) apply(cfg Config) {
 	themeChanged := cfg.Theme != gw.cfg.Theme
 	gw.cfg = cfg
 
-	app := gw.app
-	app.mu.Lock()
-	app.theme = cfg.Theme
-	app.keys = cfg.Keybindings
-	app.scrollback = cfg.Scrollback // new panes; existing rings keep their size
-	app.scrollbackBytes = cfg.ScrollbackBytes
-	var panes []*Pane
-	if app.root != nil {
-		for _, leaf := range app.root.leaves() {
-			panes = append(panes, leaf.pane)
+	for _, t := range gw.tabs {
+		app := t.app
+		app.mu.Lock()
+		app.theme = cfg.Theme
+		app.keys = cfg.Keybindings
+		app.scrollback = cfg.Scrollback // new panes; existing rings keep their size
+		app.scrollbackBytes = cfg.ScrollbackBytes
+		var panes []*Pane
+		if app.root != nil {
+			for _, leaf := range app.root.leaves() {
+				panes = append(panes, leaf.pane)
+			}
 		}
+		colors := app.paneOSCColors()
+		app.mu.Unlock()
+		if themeChanged {
+			// OSC 10/11/12 replies should report the new colours.
+			for _, p := range panes {
+				p.mu.Lock()
+				p.themeFGColor, p.themeBGColor, p.themeCursorColor = colors.fg, colors.bg, colors.cursor
+				p.mu.Unlock()
+			}
+		}
+		t.view.applyConfig(cfg)
 	}
-	colors := app.paneOSCColors()
-	app.mu.Unlock()
-
 	if themeChanged {
-		// OSC 10/11/12 replies should report the new colours.
-		for _, p := range panes {
-			p.mu.Lock()
-			p.themeFGColor, p.themeBGColor, p.themeCursorColor = colors.fg, colors.bg, colors.cursor
-			p.mu.Unlock()
-		}
+		gw.tabsCSS.LoadFromString(tabsCSS(cfg.Theme))
 		gw.applyDarkPreference()
 	}
-	gw.view.applyConfig(cfg)
+	gw.applyTabsLayout()
 	if gw.settings != nil {
 		gw.settings.load(cfg)
 	}
-	L.Info("config: applied", "theme", cfg.ThemeName, "font", cfg.Font, "padding", cfg.Padding)
+	L.Info("config: applied", "theme", cfg.ThemeName, "font", cfg.Font, "padding", cfg.Padding, "tabs", cfg.Tabs.Position)
 }
 
 func (gw *guiWin) applyDarkPreference() {
@@ -405,18 +403,6 @@ func guiInstallCSS() {
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), css, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 }
 
-// guiRedrawBridge turns pane redraw signals into (coalesced) GTK draws. The
-// short settle wait lets erase-then-redraw bursts land in one frame, as the
+// sleepRenderSettle lets erase-then-redraw bursts land in one frame, as the
 // TUI render loop does.
-func guiRedrawBridge(app *App, view *termView) {
-	for {
-		select {
-		case <-app.redraw:
-			time.Sleep(renderSettleInterval)
-			drainRedraw(app.redraw)
-			view.requestDraw()
-		case <-app.done:
-			return
-		}
-	}
-}
+func sleepRenderSettle() { time.Sleep(renderSettleInterval) }

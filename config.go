@@ -48,6 +48,7 @@ type windowConfig struct {
 type tabsConfig struct {
 	Position string `toml:"position"` // left | right | top | bottom
 	Width    int    `toml:"width"`    // sidebar width in pixels when left/right
+	Autohide bool   `toml:"autohide"` // hide the tab bar while only one tab is open
 }
 
 // Tab bar positions accepted by [tabs] position.
@@ -615,6 +616,7 @@ padding = 8          # pixels between the window edge and the text grid
 [tabs]
 position = "left"    # left | right | top | bottom
 width    = 220       # sidebar width in pixels when left or right
+autohide = false     # hide the tab bar while only one tab is open
 
 # Optional UI color overrides - leave blank to use the theme's defaults.
 # Values must be "#RRGGBB" hex strings.

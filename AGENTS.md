@@ -21,7 +21,10 @@ It is used daily with Copilot CLI, Claude Code, btop, vim, and other TUI apps.
 ```
 main.go             Entry point — calls Execute()
 cmd.go              cobra root (GUI) and "tui" commands, run() for the TUI
-gui.go              GTK application, window, pane spawn, redraw bridge
+gui.go              GTK application, window, actions, config watch/reload/apply
+gui_tabs.go         Tabs: one App + termView per tab in a GtkStack; tab strip
+gui_settings.go     Preferences window (writes keys via tomledit.go)
+tomledit.go         Comment-preserving single-key TOML edits, atomic config writes
 gui_view.go         termView widget: frame capture under Pane.mu, snapshot drawing
 gui_glyphs.go       Procedural box drawing, blocks, braille
 gui_input.go        GDK keys → tcell events → keyToBytesMode; mouse; clipboard
@@ -107,8 +110,11 @@ while holding `Pane.mu`.
 
 - GTK calls stay on the main thread; goroutines reach it only via
   `glib.IdleAdd` (see `termView.requestDraw`).
-- The GUI reuses `App` as the pane model with no tcell screen: never call
-  code paths that touch `app.screen` from GUI code.
+- The GUI reuses `App` as the pane model (one per tab) with no tcell screen:
+  never call code paths that touch `app.screen` from GUI code.
+- The config file is the source of truth. GUI changes go through
+  `guiWin.setKey` → file → `reload` → `apply`; `apply` must stay idempotent
+  because every write also triggers the directory monitor.
 - Panes get `cols+1` columns because Pane reserves its last column for the
   TUI scrollbar; the GUI draws its scrollbar in the padding instead.
 - Never retain `gsk.RenderNode` values: gotk4 wraps them with GObject

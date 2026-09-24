@@ -28,9 +28,12 @@ Early. What works today:
   cursor/keypad modes, modifiers
 - Mouse selection, double-click word, wheel scrollback, mouse reporting to apps
 - Clipboard, bracketed paste, font zoom, scrollback
+- Tabs as a sidebar (left/right) or a bar (top/bottom), coloured from the
+  terminal theme, with titles from the running program and activity dots
+- Preferences window (Ctrl+,) that edits the config file in place; edits from
+  any editor apply live
 
-Planned layers: config and themes, tabs (vertical or horizontal), splits,
-IME input.
+Planned layers: theme importers (Ghostty format first), splits, IME input.
 
 ## Install
 
@@ -44,6 +47,9 @@ grm install Vamxi/bunker
 
 | Key | Action |
 |---|---|
+| `Ctrl+Shift+T` / `Ctrl+Shift+W` | New tab (in the current directory) / close tab |
+| `Ctrl+PgUp` / `Ctrl+PgDn` | Previous / next tab (middle-click a tab to close it) |
+| `Ctrl+,` | Preferences |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste (`Shift+Insert` also pastes) |
 | `Ctrl+Shift+=` / `Ctrl+Shift+-` / `Ctrl+Shift+0` | Font bigger / smaller / reset |
 | `Shift+PgUp` / `Shift+PgDn` | Scroll history |
@@ -60,10 +66,27 @@ bunker tui                 # bunk's multiplexer in the current terminal
 BUNKER_FONT="JetBrains Mono 12" bunker
 ```
 
-Configuration is shared with bunk for now (`~/.config/bunk/config.toml`,
-`bunker config init`). Relevant fields: `theme`, `scrollback` (lines, default
-10 000), and `scrollback_mb` (optional per-pane memory cap; the smaller limit
-wins).
+## Configuration
+
+`~/.config/bunker/config.toml` (`bunker config init` writes a documented
+default). Preferences edits it in place and keeps your comments; saving it
+from an editor applies immediately, and an invalid file keeps the previous
+settings and says why.
+
+```toml
+theme = "nord"                  # default, solarized-dark, dracula, nord
+font  = "JetBrains Mono 12"     # Pango font description
+scrollback    = 10000           # lines per terminal
+scrollback_mb = 32              # optional memory cap; the smaller limit wins
+
+[window]
+padding = 8
+
+[tabs]
+position = "left"               # left | right | top | bottom
+width    = 220                  # sidebar width
+autohide = false                # hide the strip with a single tab
+```
 
 ## Performance
 

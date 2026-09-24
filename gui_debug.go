@@ -1,5 +1,8 @@
 // gui_debug.go - offscreen screenshots for manual and scripted checks.
 //
+// BUNKER_TABS="cmd one;cmd two" opens one extra tab per command (run with
+// sh -c), for screenshots of the tab strip.
+//
 // BUNKER_OPEN=preferences opens the Preferences window at startup, and a
 // screenshot then captures it instead of the terminal.
 //
@@ -46,6 +49,7 @@ import "C"
 import (
 	"os"
 	"runtime/pprof"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -64,21 +68,33 @@ func guiScheduleScreenshot(main *gtk.ApplicationWindow, target func() *gtk.Windo
 	if d, err := time.ParseDuration(os.Getenv("BUNKER_SCREENSHOT_DELAY")); err == nil {
 		delay = d
 	}
-	coreglib.TimeoutAdd(uint(delay.Milliseconds()), func() bool {
-		defer main.Close()
+	cpath := C.CString(path) // freed after the last attempt
+	attempts := 0
+	// attempt returns true to be retried: step 1 means GTK has no frame for
+	// the window yet.
+	attempt := func() bool {
 		win := target()
-		cpath := C.CString(path)
-		defer C.free(unsafe.Pointer(cpath))
-		widget := C.uintptr_t(coreglib.InternObject(win).Native())
-		if code := C.bunker_screenshot(widget, cpath); code != 0 {
+		code := C.bunker_screenshot(C.uintptr_t(coreglib.InternObject(win).Native()), cpath)
+		if code == 1 && attempts < 20 {
+			attempts++
+			win.QueueDraw()
+			return true
+		}
+		if code != 0 {
 			L.Error("screenshot: failed", "path", path, "step", int(code))
+		}
+		C.free(unsafe.Pointer(cpath))
+		main.Close()
+		return false
+	}
+	coreglib.TimeoutAdd(uint(delay.Milliseconds()), func() bool {
+		if attempt() {
+			coreglib.TimeoutAdd(150, attempt)
 		}
 		return false
 	})
 }
 
-// guiStartProfile writes a CPU profile to $BUNKER_CPUPROFILE until the
-// returned stop function runs.
 func guiStartProfile() func() {
 	path := os.Getenv("BUNKER_CPUPROFILE")
 	if path == "" {
@@ -97,4 +113,14 @@ func guiStartProfile() func() {
 		pprof.StopCPUProfile()
 		f.Close() //nolint:errcheck
 	}
+}
+
+func guiDebugExtraTabs() [][]string {
+	var cmds [][]string
+	for _, c := range strings.Split(os.Getenv("BUNKER_TABS"), ";") {
+		if c = strings.TrimSpace(c); c != "" {
+			cmds = append(cmds, []string{"/bin/sh", "-c", c})
+		}
+	}
+	return cmds
 }

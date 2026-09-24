@@ -27,6 +27,7 @@ type settingsWindow struct {
 	padding      *gtk.SpinButton
 	tabsPos      *gtk.DropDown
 	tabsWidth    *gtk.SpinButton
+	tabsHide     *gtk.Switch
 	scrollback   *gtk.SpinButton
 	scrollbackMB *gtk.SpinButton
 	status       *gtk.Label
@@ -154,6 +155,14 @@ func newSettingsWindow(gw *guiWin) *settingsWindow {
 	})
 	field("Sidebar width", s.tabsWidth)
 
+	s.tabsHide = gtk.NewSwitch()
+	s.tabsHide.NotifyProperty("active", func() {
+		if !s.updating {
+			s.write("tabs", "autohide", strconv.FormatBool(s.tabsHide.Active()))
+		}
+	})
+	field("Hide with a single tab", s.tabsHide)
+
 	// Scrollback
 	heading("Scrollback")
 	s.scrollback = spin(100, 1_000_000, 1000)
@@ -230,6 +239,7 @@ func (s *settingsWindow) load(cfg Config) {
 		s.tabsPos.SetSelected(uint(i))
 	}
 	s.tabsWidth.SetValue(float64(cfg.Tabs.Width))
+	s.tabsHide.SetActive(cfg.Tabs.Autohide)
 	s.scrollback.SetValue(float64(cfg.Scrollback))
 	s.scrollbackMB.SetValue(float64(cfg.ScrollbackBytes >> 20))
 }
