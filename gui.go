@@ -44,7 +44,7 @@ type guiWin struct {
 	strip       *gtk.Box
 	stripScroll *gtk.ScrolledWindow
 	layout      *gtk.Box
-	tabsCSS     *gtk.CSSProvider
+	themeCSS    *gtk.CSSProvider
 
 	cfg           Config
 	configPath    string // "" = default location
@@ -118,13 +118,14 @@ func guiConfig(cfg Config) Config {
 
 func (gw *guiWin) build(command []string) {
 	guiInstallCSS()
-	gw.tabsCSS = gtk.NewCSSProvider()
-	gw.tabsCSS.LoadFromString(tabsCSS(gw.cfg.Theme))
-	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), gw.tabsCSS, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+	gw.themeCSS = gtk.NewCSSProvider()
+	gw.themeCSS.LoadFromString(themeCSS(gw.cfg.Theme))
+	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), gw.themeCSS, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 	gw.applyDarkPreference()
 
 	win := gtk.NewApplicationWindow(gw.gapp)
 	win.SetTitle("bunker")
+	win.AddCSSClass("bunker-window")
 	gw.win = win
 	gw.installActions()
 	win.SetTitlebar(gw.headerBar())
@@ -330,7 +331,7 @@ func (gw *guiWin) apply(cfg Config) {
 		t.view.applyConfig(cfg)
 	}
 	if themeChanged {
-		gw.tabsCSS.LoadFromString(tabsCSS(cfg.Theme))
+		gw.themeCSS.LoadFromString(themeCSS(cfg.Theme))
 		gw.applyDarkPreference()
 	}
 	gw.applyTabsLayout()
