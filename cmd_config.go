@@ -1,4 +1,4 @@
-// cmd_config.go - "bunk config" subcommand tree.
+// cmd_config.go - "bunker config" subcommand tree.
 package main
 
 import (
@@ -16,13 +16,13 @@ func init() {
 
 var configCmd = &cobra.Command{
 	Use:   "config",
-	Short: "Manage bunk configuration",
+	Short: "Manage bunker configuration",
 }
 
 var configInitCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Write a default config.toml to " + "~/.config/bunk/",
-	Long: `Creates ~/.config/bunk/config.toml with all options documented.
+	Short: "Write a default config.toml to " + "~/.config/bunker/",
+	Long: `Creates ~/.config/bunker/config.toml with all options documented.
 Exits with an error if the file already exists (use --force to overwrite).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")

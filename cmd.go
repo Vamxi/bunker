@@ -39,7 +39,7 @@ func bunkLogo() string {
 
 func init() {
 	rootCmd.AddCommand(tuiCmd)
-	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path (default: ~/.config/bunk/config.toml)")
+	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path (default: ~/.config/bunker/config.toml)")
 	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: terminal, default, solarized-dark, dracula, nord")
 	rootCmd.PersistentFlags().BoolVarP(&flagDebug, "debug", "d", false, "enable debug-level logging")
 	rootCmd.PersistentFlags().BoolVar(&flagTrace, "trace", false, "enable trace-level logging (logs raw PTY byte chunks)")

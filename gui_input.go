@@ -76,6 +76,13 @@ func (v *termView) keyPressed(keyval, _ uint, state gdk.ModifierType) bool {
 	ctrl := state&gdk.ControlMask != 0
 	shift := state&gdk.ShiftMask != 0
 
+	// Ctrl+, opens Preferences (GNOME convention). Handled here because the
+	// terminal consumes keys before the window's accelerators see them.
+	if ctrl && !shift && keyval == gdk.KEY_comma {
+		v.ActivateAction("win.preferences", nil)
+		return true
+	}
+
 	// Terminal-level shortcuts (kitty/GNOME conventions: Ctrl+Shift+…).
 	if ctrl && shift {
 		switch gdk.KeyvalToLower(keyval) {
@@ -387,8 +394,8 @@ func (v *termView) mouseMotion(x, y float64, state gdk.ModifierType) {
 func (v *termView) mouseScroll(dy float64, state gdk.ModifierType) {
 	defer guiRecover("mouseScroll")
 	v.scrollAcc += dy
-	x := guiPadding + (float64(v.mouseCell[0])+0.5)*v.cellW
-	y := guiPadding + (float64(v.mouseCell[1])+0.5)*v.cellH
+	x := v.pad + (float64(v.mouseCell[0])+0.5)*v.cellW
+	y := v.pad + (float64(v.mouseCell[1])+0.5)*v.cellH
 	for v.scrollAcc <= -1 {
 		v.scrollAcc++
 		v.sendMouse(x, y, v.mouseBtn|tcell.WheelUp, state)

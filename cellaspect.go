@@ -4,7 +4,7 @@
 // actual pixel dimensions rather than just character-cell counts.
 //
 // The default of 2.25 suits common monospace fonts (e.g. Noto Sans Mono 11pt
-// in Ptyxis).  Override via cell_aspect in ~/.config/bunk/config.toml.
+// in Ptyxis).  Override via cell_aspect in ~/.config/bunker/config.toml.
 package main
 
 // queryCellAspect returns the cell pixel aspect ratio (height / width).

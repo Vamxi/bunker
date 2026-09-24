@@ -1,6 +1,6 @@
 // config.go - configuration loading and theme registry.
 //
-// Config file location: ~/.config/bunk/config.toml (XDG_CONFIG_HOME respected).
+// Config file location: ~/.config/bunker/config.toml (XDG_CONFIG_HOME respected).
 //
 // Built-in themes:
 //
@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -33,9 +34,36 @@ type fileConfig struct {
 	CellAspect   float64           `toml:"cell_aspect"`   // cell pixel H/W ratio; 0 = auto-detect
 	Scrollback   int               `toml:"scrollback"`    // max scrollback lines per pane; 0 = default
 	ScrollbackMB float64           `toml:"scrollback_mb"` // optional per-pane memory cap; 0 = lines only
+	Font         string            `toml:"font"`          // GUI: Pango font description, e.g. "JetBrains Mono 12"
+	Window       windowConfig      `toml:"window"`        // GUI window options
+	Tabs         tabsConfig        `toml:"tabs"`          // GUI tab bar options
 	UI           uiOverride        `toml:"ui"`
 	Keys         map[string]string `toml:"keys"` // action → key string, e.g. "split" → "f1"
 }
+
+type windowConfig struct {
+	Padding int `toml:"padding"` // pixels around the terminal grid
+}
+
+type tabsConfig struct {
+	Position string `toml:"position"` // left | right | top | bottom
+	Width    int    `toml:"width"`    // sidebar width in pixels when left/right
+}
+
+// Tab bar positions accepted by [tabs] position.
+var tabPositions = []string{"left", "right", "top", "bottom"}
+
+const (
+	defaultFont      = "Monospace 11"
+	defaultPadding   = 8
+	defaultTabsWidth = 220
+	maxPadding       = 64
+	minTabsWidth     = 120
+	maxTabsWidth     = 600
+	defaultTabsSide  = "left"
+	defaultThemeName = "default"
+	configDirName    = "bunker"
+)
 
 type uiOverride struct {
 	ActiveBorder   string `toml:"active_border"`
@@ -239,7 +267,7 @@ var keybindingDefaults = []kbEntry{
 // the config is loaded).
 func keybindingsHelpText(kb *Keybindings) string {
 	var b strings.Builder
-	b.WriteString("Key bindings (configurable via ~/.config/bunk/config.toml):\n")
+	b.WriteString("Key bindings (configurable via ~/.config/bunker/config.toml):\n")
 	for _, e := range keybindingDefaults {
 		key := e.def
 		if kb != nil {
@@ -324,6 +352,11 @@ type resolvedTheme struct {
 
 // Config is the fully resolved application configuration.
 type Config struct {
+	Path       string // file the config was read from (may not exist yet)
+	ThemeName  string // name the theme was resolved from
+	Font       string
+	Padding    int
+	Tabs       tabsConfig
 	Theme      resolvedTheme
 	LogFile    string
 	LogLevel   string
@@ -418,10 +451,10 @@ var BuiltinThemes = map[string]ThemeDef{
 // DefaultConfigPath returns the XDG-compliant config file path.
 func DefaultConfigPath() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "bunk", "config.toml")
+		return filepath.Join(xdg, configDirName, "config.toml")
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "bunk", "config.toml")
+	return filepath.Join(home, ".config", configDirName, "config.toml")
 }
 
 // LoadConfig reads the TOML config at path (empty = default), applies the
@@ -435,9 +468,12 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 	}
 
 	fc := fileConfig{
-		Theme:    "default",
+		Theme:    defaultThemeName,
 		LogFile:  "/tmp/bunk.log",
 		LogLevel: "info",
+		Font:     defaultFont,
+		Window:   windowConfig{Padding: defaultPadding},
+		Tabs:     tabsConfig{Position: defaultTabsSide, Width: defaultTabsWidth},
 	}
 	if _, err := toml.DecodeFile(path, &fc); err != nil {
 		if explicit || !os.IsNotExist(err) {
@@ -451,8 +487,19 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 
 	def, ok := BuiltinThemes[fc.Theme]
 	if !ok {
-		def = BuiltinThemes["default"]
+		L.Warn("config: unknown theme, using default", "theme", fc.Theme)
+		fc.Theme = defaultThemeName
+		def = BuiltinThemes[defaultThemeName]
 	}
+	if strings.TrimSpace(fc.Font) == "" {
+		fc.Font = defaultFont
+	}
+	fc.Window.Padding = min(max(fc.Window.Padding, 0), maxPadding)
+	if !slices.Contains(tabPositions, fc.Tabs.Position) {
+		L.Warn("config: unknown tabs position, using left", "position", fc.Tabs.Position)
+		fc.Tabs.Position = defaultTabsSide
+	}
+	fc.Tabs.Width = min(max(fc.Tabs.Width, minTabsWidth), maxTabsWidth)
 
 	// Apply per-field [ui] overrides.
 	if fc.UI.ActiveBorder != "" {
@@ -474,6 +521,11 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 	}
 
 	return Config{
+		Path:            path,
+		ThemeName:       fc.Theme,
+		Font:            fc.Font,
+		Padding:         fc.Window.Padding,
+		Tabs:            fc.Tabs,
 		Theme:           resolveTheme(def),
 		LogFile:         fc.LogFile,
 		LogLevel:        fc.LogLevel,
@@ -522,12 +574,18 @@ func hexColor(s string) tcell.Color {
 
 // DefaultConfigTOML returns a well-commented default config.toml as a string.
 func DefaultConfigTOML() string {
-	return fmt.Sprintf(`# bunk configuration
+	return fmt.Sprintf(`# bunker configuration
 # %s
+#
+# Settings (Ctrl+,) edits this file in place and keeps your comments.
+# Changes saved here from an editor apply to open windows immediately.
 
-# Built-in themes: terminal, default, solarized-dark, dracula, nord
-# Use "terminal" to inherit colours from your terminal emulator.
+# Built-in themes: default, solarized-dark, dracula, nord
+# ("terminal" inherits host colours and only applies to bunker tui).
 theme = "default"
+
+# Font: a Pango font description, family then size.
+font = "Monospace 11"
 
 # Logging.  Set log_file = "" to disable logging entirely.
 log_file  = "/tmp/bunk.log"
@@ -550,6 +608,13 @@ log_level = "info"  # trace | debug | info | warn | error
 # panes hold fewer rows.  Each cell costs 32 bytes (200 cols x 10000 rows
 # ~= 61 MiB).  Leave unset to limit by lines only.
 # scrollback_mb = 32
+
+[window]
+padding = 8          # pixels between the window edge and the text grid
+
+[tabs]
+position = "left"    # left | right | top | bottom
+width    = 220       # sidebar width in pixels when left or right
 
 # Optional UI color overrides - leave blank to use the theme's defaults.
 # Values must be "#RRGGBB" hex strings.

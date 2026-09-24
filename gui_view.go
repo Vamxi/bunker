@@ -31,7 +31,6 @@ import (
 )
 
 const (
-	guiPadding       = 8.0
 	guiDefaultCols   = 100
 	guiDefaultRows   = 30
 	guiReflowDelay   = 50 * time.Millisecond
@@ -63,6 +62,7 @@ type termView struct {
 	theme resolvedTheme
 	win   *gtk.ApplicationWindow
 
+	pad      float64 // pixels around the grid ([window] padding)
 	fontBase string
 	fontSize float64 // points; 0 = size from fontBase
 	fonts    [4]*pango.FontDescription
@@ -122,11 +122,12 @@ var termViewType = coreglib.RegisterSubclassWithConstructor[*termView](
 	}),
 )
 
-func newTermView(app *App, font string) *termView {
+func newTermView(app *App, cfg Config) *termView {
 	v := termViewType.New()
 	v.app = app
-	v.theme = app.theme
-	v.fontBase = font
+	v.theme = cfg.Theme
+	v.pad = float64(cfg.Padding)
+	v.fontBase = cfg.Font
 	v.layouts = make(map[layoutKey]*layoutEntry)
 	v.rect = graphene.RectAlloc()
 	v.point = graphene.NewPointAlloc()
@@ -135,9 +136,31 @@ func newTermView(app *App, font string) *termView {
 	v.SetHExpand(true)
 	v.SetVExpand(true)
 	v.SetCursorFromName("text")
-	v.setFont(font, 0)
+	v.setFont(v.fontBase, 0)
 	v.installInput()
 	return v
+}
+
+// applyConfig applies a reloaded config to a live view. Only what changed
+// is touched, so reloading an unchanged file (or our own write) is free and
+// keeps the current font zoom.
+func (v *termView) applyConfig(cfg Config) {
+	relayout := false
+	if cfg.Font != v.fontBase {
+		v.fontBase = cfg.Font
+		v.setFont(cfg.Font, 0)
+		relayout = true
+	}
+	if pad := float64(cfg.Padding); pad != v.pad {
+		v.pad = pad
+		relayout = true
+	}
+	v.theme = cfg.Theme // layouts are colour-independent, nothing to flush
+	if relayout {
+		v.cols, v.rows = 0, 0 // force sizeAllocate to recompute the grid
+		v.QueueResize()
+	}
+	v.QueueDraw()
 }
 
 // setFont resolves the four font faces and recomputes cell metrics.
@@ -194,17 +217,17 @@ func (v *termView) zoomFont(delta float64) {
 
 func (v *termView) measure(orientation gtk.Orientation, _ int) (minimum, natural, minBase, natBase int) {
 	if orientation == gtk.OrientationHorizontal {
-		return int(4*v.cellW + 2*guiPadding), int(guiDefaultCols*v.cellW + 2*guiPadding), -1, -1
+		return int(4*v.cellW + 2*v.pad), int(guiDefaultCols*v.cellW + 2*v.pad), -1, -1
 	}
-	return int(2*v.cellH + 2*guiPadding), int(guiDefaultRows*v.cellH + 2*guiPadding), -1, -1
+	return int(2*v.cellH + 2*v.pad), int(guiDefaultRows*v.cellH + 2*v.pad), -1, -1
 }
 
 // sizeAllocate recomputes the grid and resizes the PTY. The shell gets
 // SIGWINCH immediately; primary-screen reflow is debounced like bunk's.
 func (v *termView) sizeAllocate(width, height, _ int) {
 	defer guiRecover("sizeAllocate")
-	cols := max(2, int((float64(width)-2*guiPadding)/v.cellW))
-	rows := max(1, int((float64(height)-2*guiPadding)/v.cellH))
+	cols := max(2, int((float64(width)-2*v.pad)/v.cellW))
+	rows := max(1, int((float64(height)-2*v.pad)/v.cellH))
 	if cols == v.cols && rows == v.rows {
 		return
 	}
@@ -363,7 +386,7 @@ func (v *termView) snapshot(s *gtk.Snapshot) {
 
 	for row := 0; row < v.frameRows; row++ {
 		s.Save()
-		s.Translate(v.pt(guiPadding, guiPadding+float64(row)*v.cellH))
+		s.Translate(v.pt(v.pad, v.pad+float64(row)*v.cellH))
 		v.drawRow(s, v.grid[row])
 		s.Restore()
 	}
@@ -592,7 +615,7 @@ func (v *termView) drawSelection(s *gtk.Snapshot) {
 			continue
 		}
 		x0, x1 := v.colX(c0), v.colX(c1+1)
-		v.fillRect(s, guiPadding+x0, guiPadding+float64(row)*v.cellH, x1-x0, v.cellH, c)
+		v.fillRect(s, v.pad+x0, v.pad+float64(row)*v.cellH, x1-x0, v.cellH, c)
 	}
 }
 
@@ -607,9 +630,9 @@ func (v *termView) drawCursor(s *gtk.Snapshot) {
 	if cell.Width == 2 {
 		wcols = 2
 	}
-	x := guiPadding + v.colX(cur.X)
+	x := v.pad + v.colX(cur.X)
 	w := v.colX(cur.X+wcols) - v.colX(cur.X)
-	y := guiPadding + float64(cur.Y)*v.cellH
+	y := v.pad + float64(cur.Y)*v.cellH
 	color := st.cursorColor
 	if color == tcell.ColorDefault || color == tcell.ColorReset {
 		color = v.theme.fg
@@ -638,7 +661,7 @@ func (v *termView) drawCursor(s *gtk.Snapshot) {
 		bg := vtColor(cell.BG, v.theme.bg, v.theme)
 		_, variant := v.cellStyle(&cell)
 		s.Save()
-		s.Translate(v.pt(guiPadding, y))
+		s.Translate(v.pt(v.pad, y))
 		if !v.drawSpecial(s, ch, cur.X, wcols, bg) {
 			v.drawText(s, string(ch)+cell.Combining(), variant, v.colX(cur.X), bg)
 		}
@@ -652,11 +675,12 @@ func (v *termView) drawScrollbar(s *gtk.Snapshot, height float64) {
 		return
 	}
 	total := float64(st.sbCount + st.rows)
-	track := height - 2*guiPadding
+	track := height - 2*v.pad
 	thumbH := max(12, track*float64(st.rows)/total)
-	top := guiPadding + (track-thumbH)*float64(st.sbCount-st.sbOff)/float64(st.sbCount)
-	x := float64(v.Width()) - guiPadding + 2
-	v.fillRect(s, x, top, guiPadding-4, thumbH, rgba(v.theme.scrollThumb, 0.8))
+	top := v.pad + (track-thumbH)*float64(st.sbCount-st.sbOff)/float64(st.sbCount)
+	const thumbW = 4.0
+	x := float64(v.Width()) - max(v.pad, thumbW+2)/2 - thumbW/2
+	v.fillRect(s, x, top, thumbW, thumbH, rgba(v.theme.scrollThumb, 0.8))
 }
 
 // ---------------------------------------------------------------------------
@@ -678,8 +702,8 @@ func (v *termView) pt(x, y float64) *graphene.Point {
 // cellAt maps widget coordinates to a grid cell. Column cols (one past the
 // last) addresses the scrollbar gutter, matching Pane's reserved column.
 func (v *termView) cellAt(x, y float64) (int, int) {
-	col := int((x - guiPadding) / v.cellW)
-	row := int((y - guiPadding) / v.cellH)
+	col := int((x - v.pad) / v.cellW)
+	row := int((y - v.pad) / v.cellH)
 	return min(max(col, 0), v.cols), min(max(row, 0), max(v.rows-1, 0))
 }
 

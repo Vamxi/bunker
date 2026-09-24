@@ -1,5 +1,8 @@
 // gui_debug.go - offscreen screenshots for manual and scripted checks.
 //
+// BUNKER_OPEN=preferences opens the Preferences window at startup, and a
+// screenshot then captures it instead of the terminal.
+//
 // BUNKER_SCREENSHOT=out.png renders the window through its own GSK renderer
 // (the same GPU path as on screen) after BUNKER_SCREENSHOT_DELAY (default
 // 1.5s), writes a PNG, and quits. Combine with `-- command` to capture a
@@ -12,22 +15,30 @@ package main
 #include <stdint.h>
 #include <stdlib.h>
 
-static gboolean bunker_screenshot(uintptr_t widget, const char *path) {
+// Returns 0 on success, else the failing step: 1 no frame, 2 no renderer,
+// 3 render failed, 4 save failed.
+static int bunker_screenshot(uintptr_t widget, const char *path) {
 	GtkWidget *w = GTK_WIDGET((gpointer)widget);
 	GdkPaintable *p = gtk_widget_paintable_new(w);
 	GtkSnapshot *s = gtk_snapshot_new();
 	gdk_paintable_snapshot(p, s, gtk_widget_get_width(w), gtk_widget_get_height(w));
 	GskRenderNode *n = gtk_snapshot_free_to_node(s);
-	gboolean ok = FALSE;
-	if (n != NULL) {
-		GskRenderer *r = gtk_native_get_renderer(gtk_widget_get_native(w));
-		GdkTexture *t = gsk_renderer_render_texture(r, n, NULL);
-		ok = gdk_texture_save_to_png(t, path);
-		g_object_unref(t);
-		gsk_render_node_unref(n);
-	}
 	g_object_unref(p);
-	return ok;
+	if (n == NULL)
+		return 1;
+	GtkNative *native = gtk_widget_get_native(w);
+	GskRenderer *r = native ? gtk_native_get_renderer(native) : NULL;
+	if (r == NULL) {
+		gsk_render_node_unref(n);
+		return 2;
+	}
+	GdkTexture *t = gsk_renderer_render_texture(r, n, NULL);
+	gsk_render_node_unref(n);
+	if (t == NULL)
+		return 3;
+	gboolean ok = gdk_texture_save_to_png(t, path);
+	g_object_unref(t);
+	return ok ? 0 : 4;
 }
 */
 import "C"
@@ -42,7 +53,9 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
-func guiScheduleScreenshot(win *gtk.ApplicationWindow) {
+// guiScheduleScreenshot captures target() (the main window unless a debug
+// hook opened another) and then closes main.
+func guiScheduleScreenshot(main *gtk.ApplicationWindow, target func() *gtk.Window) {
 	path := os.Getenv("BUNKER_SCREENSHOT")
 	if path == "" {
 		return
@@ -52,12 +65,13 @@ func guiScheduleScreenshot(win *gtk.ApplicationWindow) {
 		delay = d
 	}
 	coreglib.TimeoutAdd(uint(delay.Milliseconds()), func() bool {
-		defer win.Close()
+		defer main.Close()
+		win := target()
 		cpath := C.CString(path)
 		defer C.free(unsafe.Pointer(cpath))
 		widget := C.uintptr_t(coreglib.InternObject(win).Native())
-		if C.bunker_screenshot(widget, cpath) == 0 {
-			L.Error("screenshot: failed", "path", path)
+		if code := C.bunker_screenshot(widget, cpath); code != 0 {
+			L.Error("screenshot: failed", "path", path, "step", int(code))
 		}
 		return false
 	})
