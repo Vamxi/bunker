@@ -18,6 +18,7 @@ built in.
 - **Tabs** in a sidebar (collapsible) or a bar, renamable, coloured by the theme
 - **GPU rendering**, one Go binary, no Electron
 - **Preferences** (Ctrl+,) that edit a plain config file; editor changes apply live
+- **Clickable links:** Ctrl+click URLs and `ls --hyperlink` links
 - **Input methods:** dead keys, Compose, CJK, emoji picker
 
 ## Install
@@ -53,6 +54,9 @@ Right-click a tab to rename or close it. Pane keys follow bunk's `[keys]` config
 
 `~/.config/bunker/config.toml`. Run `bunker config init` for a documented
 default, or use Preferences.
+
+Coming from bunk? Your config works as-is:
+`cp ~/.config/bunk/config.toml ~/.config/bunker/`
 
 ```toml
 theme = "nord"               # default, solarized-dark, dracula, nord

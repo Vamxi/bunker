@@ -86,6 +86,9 @@ type termView struct {
 
 	ime imeState
 
+	hoverLink *linkSpan        // link under the pointer, underlined
+	openURI   func(url string) // tests replace the desktop launcher
+
 	mouseBtn  tcell.ButtonMask
 	mouseCell [2]int
 	scrollAcc float64

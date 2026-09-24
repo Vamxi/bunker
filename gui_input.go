@@ -43,6 +43,7 @@ func (v *termView) installInput() {
 
 	motion := gtk.NewEventControllerMotion()
 	motion.ConnectMotion(func(x, y float64) { v.mouseMotion(x, y, motion.CurrentEventState()) })
+	motion.ConnectLeave(func() { v.updateHoverLink(-1, -1) })
 	v.AddController(motion)
 
 	scroll := gtk.NewEventControllerScroll(gtk.EventControllerScrollVertical)
@@ -378,6 +379,13 @@ func (v *termView) mouseButton(button uint, pressed bool, x, y float64, state gd
 	if b == tcell.ButtonNone {
 		return
 	}
+	// Ctrl+click on a link opens it instead of reaching the pane.
+	if pressed && b == tcell.Button1 && state&gdk.ControlMask != 0 {
+		if link := v.linkAt(x, y); link != nil && safeLink(link.url) {
+			v.openLink(link.url)
+			return
+		}
+	}
 	if pressed {
 		v.mouseBtn |= b
 	} else {
@@ -392,6 +400,7 @@ func (v *termView) mouseMotion(x, y float64, state gdk.ModifierType) {
 	if [2]int{col, row} == v.mouseCell {
 		return
 	}
+	v.updateHoverLink(x, y)
 	v.sendMouse(x, y, v.mouseBtn, state)
 }
 

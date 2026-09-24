@@ -16,8 +16,8 @@ make check       # fmt, vet, test, build, lint: the gate before a release
 | Emulator | `internal/vt10x/*_test.go` | escape sequences, modes, wide/combining text, scroll regions, graphics, CSI parameter parsing |
 | Fast-path equivalence | `internal/vt10x/throughput_test.go`, `csi_parse_test.go` | the ASCII fast path and the allocation-free CSI parser produce exactly what the general parser does, over thousands of random inputs |
 | Pane, scrollback, reflow, search, TUI | root `*_test.go` (from bunk) | PTY bridge, scrollback ring, resize reflow, selection, search, mouse, keys, rendering in `bunker tui` |
-| Config | `config_test.go`, `tomledit_test.go`, `scrollswap_test.go` | loading and validation, comment-preserving edits, atomic writes, scrollback caps |
-| GUI logic | `gui_input_test.go`, `gui_tabs_test.go` | GDK key → terminal bytes, box-drawing table, tab labels, rename rules, separators |
+| Config | `config_test.go`, `tomledit_test.go`, `scrollswap_test.go`, `bunkconfig_test.go` | loading and validation, comment-preserving edits, atomic writes, scrollback caps; bunk's own config (`testdata/bunk-config.toml`) works when copied into bunker |
+| GUI logic | `gui_input_test.go`, `gui_tabs_test.go`, `gui_links_test.go` | GDK key → terminal bytes, box-drawing table, tab labels, rename rules, separators, URL detection, link scheme allowlist |
 | GUI integration | `gui_integration_test.go` (harness in `guitest_harness_test.go`) | real windows on the test display, driven like a user: see below |
 | Allocation guards | `allocs_test.go`, `TestWriteDoesNotAllocate`, `TestCSIParseDoesNotAllocate` | hot paths allocate nothing in steady state |
 | Size guard | `internal/vt10x/glyph_test.go` | a cell stays 32 bytes |
@@ -42,6 +42,7 @@ file on disk, tab actions.
 | `TestGUI_HeaderAndTabInfo` | cwd in the header subtitle, pane count on the tab |
 | `TestGUI_PassthroughBypassesWindowShortcuts` | Ctrl+F12 passthrough also hands window shortcuts to the program |
 | `TestGUI_TabMenu` | right-click menu opens; Close Other Tabs |
+| `TestGUI_Hyperlinks` | OSC 8 and plain URLs found under the pointer, hover underline (pixel check), Ctrl+click opens, unsafe schemes refused, plain click still selects |
 | `TestGUI_IME` | input-method text reaches the program and the search bar; composition drawn at the cursor, cursor location reported |
 | `TestGUI_WaylandIMStress` | rapid window/tab/entry churn on the Wayland input method, in a child process (this used to crash GTK) |
 

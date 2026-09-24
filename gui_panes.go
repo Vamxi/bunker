@@ -275,6 +275,7 @@ func (v *termView) drawPane(s *gtk.Snapshot, p *Pane, f *paneFrame, isActive, is
 		v.drawRow(s, f.grid[row], f.x)
 		s.Restore()
 	}
+	v.drawHoverLink(s, p, f)
 	v.drawSearchHighlights(s, f)
 	v.drawSelection(s, f)
 	if isActive {

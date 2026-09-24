@@ -5,6 +5,7 @@ package main
 // actions). One test per shipped feature; see TESTING.md.
 
 import (
+	"math"
 	"os"
 	"os/exec"
 	"strings"
@@ -430,4 +431,81 @@ func (w *testWin) gw() *guiWin { return w.guiWin }
 func tail(b []byte, lines int) string {
 	parts := strings.Split(string(b), "\n")
 	return strings.Join(parts[max(0, len(parts)-lines):], "\n")
+}
+
+// Hyperlinks: OSC 8 links and plain URLs are found under the pointer,
+// underlined on hover, and opened with Ctrl+click; unsafe schemes are not.
+func TestGUI_Hyperlinks(t *testing.T) {
+	out := `printf '\033]8;;https://github.com/jsnjack/bunk\033\\bunk repo\033]8;;\033\\\n'` +
+		`; printf 'docs: https://go.dev/doc.\n'` +
+		`; printf '\033]8;;javascript:alert(1)\033\\evil\033]8;;\033\\\n'; exec sleep 30`
+	w := newTestWin(t, out, nil)
+	p := w.panes()[0]
+	w.waitDrawn(p, "docs: https://go.dev/doc.")
+
+	var opened []string
+	onMain(func() {
+		v := w.active.view
+		v.openURI = func(u string) { opened = append(opened, u) }
+		cell := func(col, row int) (float64, float64) {
+			return v.pad + (float64(col)+0.5)*v.cellW, v.pad + (float64(row)+0.5)*v.cellH
+		}
+		x, y := cell(2, 0) // inside "bunk repo"
+		if l := v.linkAt(x, y); l == nil || l.url != "https://github.com/jsnjack/bunk" || !l.explicit || l.c0 != 0 || l.c1 != 9 {
+			t.Errorf("OSC 8 link: %+v", l)
+		}
+		v.updateHoverLink(x, y)
+		if v.hoverLink == nil {
+			t.Errorf("hover did not register the link")
+		}
+		v.mouseButton(1, true, x, y, ctrl)
+		v.mouseButton(1, false, x, y, ctrl)
+
+		x, y = cell(10, 1) // inside the plain URL
+		v.mouseButton(1, true, x, y, ctrl)
+		v.mouseButton(1, false, x, y, ctrl)
+
+		x, y = cell(1, 2) // javascript: link
+		v.mouseButton(1, true, x, y, ctrl)
+		v.mouseButton(1, false, x, y, ctrl)
+
+		x, y = cell(2, 0) // plain click selects, does not open
+		v.mouseButton(1, true, x, y, 0)
+		v.mouseButton(1, false, x, y, 0)
+	})
+	// The hovered link is underlined in the theme's blue.
+	var ux, uy int
+	var blue interface{ RGB() (int32, int32, int32) }
+	onMain(func() {
+		v := w.active.view
+		v.updateHoverLink(v.pad+2.5*v.cellW, v.pad+0.5*v.cellH)
+		ux = int(v.pad + 4*v.cellW)
+		uy = int(v.pad + math.Round(min(v.ulPos, v.cellH-v.ulThick)))
+		blue = v.theme.palette[4]
+	})
+	settle(100 * time.Millisecond)
+	ox, oy := w.viewOrigin()
+	img := w.screenshot()
+	found := false
+	for dy := -2; dy <= 2 && !found; dy++ { // the view may sit on a fractional offset
+		found = sameRGB(img.At(ux+ox, uy+oy+dy), blue)
+	}
+	if !found {
+		t.Errorf("no underline under the hovered link near (%d, %d)", ux+ox, uy+oy)
+	}
+
+	want := []string{"https://github.com/jsnjack/bunk", "https://go.dev/doc"}
+	if len(opened) != len(want) || opened[0] != want[0] || opened[1] != want[1] {
+		t.Errorf("opened %q, want %q", opened, want)
+	}
+}
+
+// viewOrigin is the terminal view's position in the window, to turn view
+// coordinates into window-screenshot coordinates.
+func (w *testWin) viewOrigin() (int, int) {
+	var x, y float64
+	onMain(func() {
+		x, y, _ = w.active.view.TranslateCoordinates(w.win, 0, 0)
+	})
+	return int(x), int(y)
 }

@@ -1,0 +1,58 @@
+# bunk configuration
+# (path)
+
+# Built-in themes: terminal, default, solarized-dark, dracula, nord
+# Use "terminal" to inherit colours from your terminal emulator.
+theme = "default"
+
+# Logging.  Set log_file = "" to disable logging entirely.
+log_file  = "/tmp/bunk.log"
+log_level = "info"  # trace | debug | info | warn | error
+
+# Cell pixel aspect ratio (cell height / cell width).
+# Used to decide split direction (vertical vs horizontal) based on real pixels.
+# Default 2.25 suits Noto Sans Mono 11pt on Ptyxis; adjust for your font.
+# Examples: JetBrains Mono 12pt ≈ 2.2  |  Fira Code 11pt ≈ 2.15
+#
+# cell_aspect = 2.25   # uncomment and adjust if splits feel wrong
+
+# Maximum scrollback lines per pane.  Higher values use more memory.
+# Note: scrollback stores screen rows, not logical lines — narrower panes
+# consume more rows per line of output due to wrapping.
+# scrollback = 10000
+
+# Optional UI color overrides - leave blank to use the theme's defaults.
+# Values must be "#RRGGBB" hex strings.
+[ui]
+active_border   = ""  # border colour for the focused pane
+inactive_border = ""  # border colour for unfocused panes
+scrollbar_thumb = ""  # scrollbar handle
+scrollbar_track = ""  # scrollbar background
+
+# ---------------------------------------------------------------------------
+# Key bindings
+# ---------------------------------------------------------------------------
+# Format: "f1", "ctrl+c", "alt+up", "shift+pgup", "escape", etc.
+# Modifiers: ctrl, alt, shift.  Key names are case-insensitive.
+# Leave a value empty (or remove the line) to keep the built-in default.
+[keys]
+split         = "f1"          # auto-split the active pane (host shell)
+split_context = "alt+f1"     # auto-split inheriting container/ssh/sudo context
+quit         = "ctrl+q"      # quit bunk
+copy         = "ctrl+c"      # copy selection (if active); otherwise forwards to shell
+paste        = "ctrl+v"      # paste from clipboard
+search       = "ctrl+f"      # enter incremental search
+passthrough  = "ctrl+f12"    # forward all keys except this toggle to the active pane
+zoom         = "f12"         # toggle fullscreen zoom on the active pane
+nav_up       = "alt+up"      # move focus to the pane above
+nav_down     = "alt+down"    # move focus to the pane below
+nav_left     = "alt+left"    # move focus to the pane on the left
+nav_right    = "alt+right"   # move focus to the pane on the right
+scroll_up    = "shift+pgup"  # scroll up in scrollback buffer
+scroll_down  = "shift+pgdn"  # scroll down / return toward live output
+reinit_host  = "alt+r"       # re-initialise host terminal after binary corruption
+
+# Search mode keys (active only while Ctrl+F search bar is open).
+search_next  = "ctrl+n"   # jump to next match  (Enter always works too)
+search_prev  = "ctrl+p"   # jump to previous match
+search_exit  = "escape"   # close search bar
