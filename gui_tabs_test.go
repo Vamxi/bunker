@@ -29,3 +29,18 @@ func TestIsCollapsedOnlyForSidebar(t *testing.T) {
 		}
 	}
 }
+
+func TestRenamedTitle(t *testing.T) {
+	for _, tt := range []struct {
+		name, prev, initial, entered, want string
+	}{
+		{"unchanged automatic title stays automatic", "", "vamsi@host:~", "vamsi@host:~", ""},
+		{"unchanged custom title stays", "logs", "logs", " logs ", "logs"},
+		{"typed name is kept", "", "vamsi@host:~", "build", "build"},
+		{"cleared returns to automatic", "logs", "logs", "  ", ""},
+	} {
+		if got := renamedTitle(tt.prev, tt.initial, tt.entered); got != tt.want {
+			t.Errorf("%s: got %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}

@@ -40,6 +40,7 @@ type guiTab struct {
 
 	customTitle string // set by renaming; "" = follow the program's title
 	editing     bool
+	renameFrom  string // entry text when editing started
 }
 
 // newTabApp builds the pane model for one tab from the current config.
@@ -210,10 +211,9 @@ func (t *guiTab) buildRow() {
 		switch click.CurrentButton() {
 		case 1:
 			t.gw.selectTab(t)
-			if n == 2 {
-				if t.gw.isCollapsed() {
-					t.gw.setCollapsed(false) // renaming needs the full width
-				}
+			// In the collapsed sidebar a double-click is almost always two
+			// quick selects, so only the expanded sidebar renames.
+			if n == 2 && !t.gw.isCollapsed() {
 				t.startRename()
 			}
 		case 2:
@@ -291,7 +291,8 @@ func (t *guiTab) startRename() {
 		return
 	}
 	t.editing = true
-	t.entry.SetText(t.title.Text())
+	t.renameFrom = t.title.Text()
+	t.entry.SetText(t.renameFrom)
 	t.title.SetVisible(false)
 	t.entry.SetVisible(true)
 	t.entry.GrabFocus()
@@ -306,7 +307,7 @@ func (t *guiTab) finishRename(commit bool) {
 	}
 	t.editing = false
 	if commit {
-		t.customTitle = strings.TrimSpace(t.entry.Text())
+		t.customTitle = renamedTitle(t.customTitle, t.renameFrom, t.entry.Text())
 	}
 	t.entry.SetVisible(false)
 	t.title.SetVisible(true)
@@ -316,6 +317,18 @@ func (t *guiTab) finishRename(commit bool) {
 	if t == t.gw.active {
 		t.view.GrabFocus()
 	}
+}
+
+// renamedTitle is the custom title after a rename that started from
+// initial and ended with entered. Leaving the text untouched keeps the
+// previous state, so clicking away never turns the automatic title into a
+// fixed name; clearing it returns to the automatic title.
+func renamedTitle(prev, initial, entered string) string {
+	entered = strings.TrimSpace(entered)
+	if entered == strings.TrimSpace(initial) {
+		return prev
+	}
+	return entered
 }
 
 // tabTextAlign centres titles in a horizontal bar and left-aligns them in

@@ -269,7 +269,7 @@ func (s *settingsWindow) buildTabs(p *settingsPage) {
 		{"New tab in the current directory", "Ctrl+Shift+T"},
 		{"Close tab", "Ctrl+Shift+W"},
 		{"Previous / next tab", "Ctrl+PgUp / Ctrl+PgDn"},
-		{"Rename tab", "Double-click"},
+		{"Rename tab", "Double-click (expanded sidebar or bar)"},
 		{"Close tab with the mouse", "Middle-click"},
 	} {
 		key := gtk.NewLabel(sc[1])
