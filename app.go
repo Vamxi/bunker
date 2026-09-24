@@ -115,6 +115,20 @@ type App struct {
 	// PTY-size update happens immediately; the expensive rawBuf replay is
 	// deferred until 50ms after the last resize event.
 	resizeTimer *time.Timer
+
+	// GUI hosts (no tcell screen) set these. sizeFn reports the grid size
+	// a zoomed pane fills; onEmpty runs, instead of shutdown, when the last
+	// pane is removed. Both may be nil when screen is set.
+	sizeFn  func() (w, h int)
+	onEmpty func()
+}
+
+// viewSize is the full grid size available to panes.
+func (app *App) viewSize() (int, int) {
+	if app.screen == nil && app.sizeFn != nil {
+		return app.sizeFn()
+	}
+	return app.screen.Size()
 }
 
 // shutdown is safe to call multiple times.  It closes every pane (sending
@@ -378,7 +392,7 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 	case kb.Quit.Matches(ev):
 		L.Debug("handleKey: quit", "key", kb.Quit)
 		return false
-	case kb.ReinitHost.Matches(ev):
+	case kb.ReinitHost.Matches(ev) && app.screen != nil: // a GUI has no host terminal to reset
 		L.Debug("handleKey: re-initialise host terminal", "key", kb.ReinitHost)
 		app.reinitHost()
 		return true
@@ -680,7 +694,7 @@ func (app *App) zoomIn() {
 	app.zoomedPane = p
 	app.zoomGeom = [4]int{p.x, p.y, p.w, p.h}
 
-	w, h := app.screen.Size()
+	w, h := app.viewSize()
 	L.Debug("zoomIn", "pane", p.id, "screen", w, "x", h)
 	p.resize(0, 0, w, h)
 	app.triggerRedraw()
@@ -830,6 +844,11 @@ func (app *App) removePane(p *Pane) {
 	app.mu.Unlock()
 
 	if shutdown {
+		if app.onEmpty != nil {
+			L.Info("removePane: last pane removed")
+			app.onEmpty()
+			return
+		}
 		L.Info("removePane: last pane removed, shutting down")
 		go app.shutdown()
 		return

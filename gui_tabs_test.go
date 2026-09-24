@@ -44,3 +44,33 @@ func TestRenamedTitle(t *testing.T) {
 		}
 	}
 }
+
+// TestCollectBorders: a vertical split whose right side is split
+// horizontally yields both separators, with the part next to the active
+// pane marked.
+func TestCollectBorders(t *testing.T) {
+	a := &Pane{x: 0, y: 0, w: 50, h: 30}
+	b := &Pane{x: 51, y: 0, w: 49, h: 15}
+	c := &Pane{x: 51, y: 16, w: 49, h: 14}
+	right := &Node{x: 51, y: 0, w: 49, h: 30, dir: splitHorizontal,
+		left: newLeaf(b, 51, 0, 49, 15), right: newLeaf(c, 51, 16, 49, 14)}
+	root := &Node{x: 0, y: 0, w: 100, h: 30, dir: splitVertical,
+		left: newLeaf(a, 0, 0, 50, 30), right: right}
+
+	var got []guiBorder
+	collectBorders(root, c, &got)
+	want := []guiBorder{
+		{vertical: false, at: 15, from: 51, to: 100},               // b | c separator
+		{vertical: false, at: 15, from: 51, to: 100, active: true}, // next to c
+		{vertical: true, at: 50, from: 0, to: 30},                  // a | right separator
+		{vertical: true, at: 50, from: 16, to: 30, active: true},   // beside c only
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d borders: %+v", len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("border %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

@@ -37,7 +37,8 @@ type guiTab struct {
 	closeBtn *gtk.Button
 	title    *gtk.Label
 	entry    *gtk.Entry // rename field, shown while editing
-	lastSeen string     // last title shown
+	info     *gtk.Label // context (container, ssh, sudo) and pane count
+	lastSeen string     // last title and info shown
 	closed   bool
 
 	customTitle string // set by renaming; "" = follow the program's title
@@ -109,12 +110,19 @@ func (gw *guiWin) newTab(dir string, command []string) *guiTab {
 	gw.strip.Append(t.row)
 
 	go t.redrawBridge()
+	// A shell exiting removes its pane from bunk's tree (focus moves to a
+	// neighbour, as in bunk); the tab closes with its last pane.
+	app.onEmpty = func() { coreglib.IdleAdd(func() { gw.closeTab(t) }) }
 	go func() {
-		select {
-		case p := <-app.paneDead:
-			L.Info("gui: shell exited, closing tab", "pane", p.id)
-			coreglib.IdleAdd(func() { gw.closeTab(t) })
-		case <-app.done:
+		for {
+			select {
+			case p := <-app.paneDead:
+				L.Info("gui: shell exited", "pane", p.id)
+				app.removePane(p)
+				coreglib.IdleAdd(t.refreshTitle)
+			case <-app.done:
+				return
+			}
 		}
 	}()
 
@@ -151,6 +159,11 @@ func (t *guiTab) buildRow() {
 	t.title.SetSingleLineMode(true)
 	t.title.SetEllipsize(pango.EllipsizeEnd)
 	t.title.SetMaxWidthChars(28)
+
+	t.info = gtk.NewLabel("")
+	t.info.AddCSSClass("bunker-tab-info")
+	t.info.SetVAlign(gtk.AlignCenter)
+	t.info.SetVisible(false)
 
 	t.entry = gtk.NewEntry()
 	t.entry.AddCSSClass("bunker-tab-entry")
@@ -192,6 +205,7 @@ func (t *guiTab) buildRow() {
 	t.row.AddCSSClass("bunker-tab")
 	t.row.Append(t.short)
 	t.row.Append(t.title)
+	t.row.Append(t.info)
 	t.row.Append(t.entry)
 	t.row.Append(closeBtn)
 
@@ -286,25 +300,64 @@ func (t *guiTab) refreshTitle() {
 	if t.closed {
 		return
 	}
-	title := "shell"
-	t.app.mu.Lock()
-	p := t.app.active
-	t.app.mu.Unlock()
-	if p != nil {
-		title = sanitizeTitle(paneDisplayTitle(p, "shell"))
+	info := t.describe()
+	if info.title == "" {
+		info.title = "shell"
 	}
 	if t.customTitle != "" {
-		title = t.customTitle
+		info.title = t.customTitle
 	}
-	if title == t.lastSeen {
+	key := info.title + "\x00" + info.context + "\x00" + info.cwd + "\x00" + strconv.Itoa(info.panes)
+	if key == t.lastSeen {
 		return
 	}
-	t.lastSeen = title
-	t.title.SetText(title)
-	t.row.SetTooltipText(title)
-	if t == t.gw.active {
-		t.gw.win.SetTitle(title)
+	t.lastSeen = key
+
+	t.title.SetText(info.title)
+	var chip []string
+	if info.context != "" {
+		chip = append(chip, info.context)
 	}
+	if info.panes > 1 {
+		chip = append(chip, "⊞"+strconv.Itoa(info.panes))
+	}
+	t.info.SetText(strings.Join(chip, " "))
+	t.info.SetVisible(len(chip) > 0 && !t.gw.isCollapsed())
+	tip := info.title
+	if info.context != "" {
+		tip += "\n" + info.context
+	}
+	if info.cwd != "" {
+		tip += "\n" + tildePath(info.cwd)
+	}
+	t.row.SetTooltipText(tip)
+	if t == t.gw.active {
+		t.gw.setWindowTitle(info)
+	}
+}
+
+// tabInfo is what the tab strip and header bar show about a tab: the
+// focused pane's title, cwd, and context, and how many panes it has.
+type tabInfo struct {
+	title, cwd, context string
+	panes               int
+}
+
+func (t *guiTab) describe() tabInfo {
+	var ti tabInfo
+	t.app.mu.Lock()
+	p := t.app.active
+	if t.app.root != nil {
+		ti.panes = len(t.app.root.leaves())
+	}
+	t.app.mu.Unlock()
+	if p == nil {
+		return ti
+	}
+	ti.title = sanitizeTitle(paneDisplayTitle(p, ""))
+	ti.cwd = p.cwd()
+	ti.context, _ = p.context()
+	return ti
 }
 
 // shortLabel is the collapsed-sidebar label: the first character of a
@@ -324,6 +377,7 @@ func (t *guiTab) applyRowMode() {
 	t.title.SetVisible(!collapsed && !t.editing)
 	t.entry.SetVisible(!collapsed && t.editing)
 	t.closeBtn.SetVisible(!collapsed)
+	t.info.SetVisible(!collapsed && t.info.Text() != "")
 	if collapsed {
 		t.row.AddCSSClass("collapsed")
 	} else {
@@ -662,6 +716,8 @@ window.bunker-window headerbar windowcontrols button:hover > image { background-
 .bunker-tab:hover .bunker-tab-close, .bunker-tab.active .bunker-tab-close { opacity: 0.75; }
 .bunker-tab.collapsed { padding: 5px 0; }
 .bunker-tab-short { font-weight: bold; }
+.bunker-tab-info { color: @muted; font-size: 0.85em; }
+window.bunker-window headerbar .bunker-subtitle { color: @muted; font-size: 0.82em; }
 .bunker-tab-list.collapsed { padding: 6px 4px; }
 .bunker-tab entry.bunker-tab-entry { min-height: 24px; padding: 0 6px; background-color: @bg; color: @fg; }
 `)

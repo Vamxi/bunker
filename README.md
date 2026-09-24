@@ -18,6 +18,13 @@ binary that draws through GTK's GPU renderer (Vulkan/GL).
 
 Early. What works today:
 
+- **bunk's multiplexer, native in every tab:** split panes (F1, direction
+  chosen in pixels), context-aware splits into the same container / SSH host
+  / sudo (Alt+F1), zoom (F12), pane focus (Alt+arrows), incremental search
+  (Ctrl+F), keyboard passthrough (Ctrl+F12), and bunk's status badges, all
+  drawn by bunker on the GPU and configured with bunk's `[keys]`
+- The header bar shows the focused pane's directory and context; tab rows
+  show the context and how many panes a tab has
 - GPU rendering through GtkSnapshot/GSK; draws only on the display's frame clock
 - Truecolor, bold/italic/dim, underline styles (single, double, curly, dotted,
   dashed) with underline colour, strikethrough, overline
@@ -33,7 +40,8 @@ Early. What works today:
 - Preferences window (Ctrl+,) that edits the config file in place; edits from
   any editor apply live
 
-Planned layers: theme importers (Ghostty format first), splits, IME input.
+Planned layers: theme importers (Ghostty format first), editable key
+bindings, IME input.
 
 ## Install
 
@@ -47,6 +55,12 @@ grm install Vamxi/bunker
 
 | Key | Action |
 |---|---|
+| `F1` / `Alt+F1` | Split the pane / split into the same container, SSH host, or sudo |
+| `F12` | Zoom the pane |
+| `Alt+←↑→↓` | Move between panes |
+| `Ctrl+F` | Search (Enter / Ctrl+N next, Ctrl+P previous, Esc exit) |
+| `Ctrl+C` / `Ctrl+V` | Copy the selection (else sent to the program) / paste |
+| `Ctrl+F12` | Keyboard passthrough for the pane (PASS badge) |
 | `Ctrl+Shift+T` / `Ctrl+Shift+W` | New tab (in the current directory) / close tab |
 | `Ctrl+PgUp` / `Ctrl+PgDn` | Previous / next tab (middle-click a tab to close it) |
 | Right-click a tab | Rename, reset name, close, close other tabs |

@@ -3,6 +3,9 @@
 // BUNKER_TABS (one command per line) opens one extra tab per command (run with
 // sh -c), for screenshots of the tab strip.
 //
+// BUNKER_KEYS="f1,alt+left,ctrl+f" sends bunk key presses to the first tab,
+// 300ms apart, after startup (key names as in [keys]).
+//
 // BUNKER_OPEN=tab-menu opens the active tab's right-click menu and a
 // screenshot captures the menu.
 //
@@ -59,6 +62,7 @@ import (
 
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/gdamore/tcell/v2"
 )
 
 // guiScheduleScreenshot captures target() (the main window unless a debug
@@ -127,4 +131,29 @@ func guiDebugExtraTabs() [][]string {
 		}
 	}
 	return cmds
+}
+
+func (gw *guiWin) runDebugKeys() {
+	spec := os.Getenv("BUNKER_KEYS")
+	if spec == "" || len(gw.tabs) == 0 {
+		return
+	}
+	t := gw.tabs[0]
+	keys := strings.Split(spec, ",")
+	i := 0
+	coreglib.TimeoutAdd(600, func() bool {
+		if i >= len(keys) || t.closed {
+			return false
+		}
+		kb, err := parseKey(keys[i])
+		i++
+		if err != nil {
+			L.Error("debug keys", "err", err)
+			return true
+		}
+		if !t.app.handleKey(tcell.NewEventKey(kb.key, kb.r, kb.mod)) {
+			gw.win.Close()
+		}
+		return true
+	})
 }

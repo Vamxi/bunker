@@ -38,6 +38,7 @@ type settingsWindow struct {
 	tabsCollapse *gtk.Switch
 	scrollback   *gtk.SpinButton
 	scrollbackMB *gtk.SpinButton
+	keyLabels    map[string]*gtk.Label // bunk action → effective key
 	status       *gtk.Label
 }
 
@@ -172,6 +173,7 @@ func newSettingsWindow(gw *guiWin) *settingsWindow {
 	s.buildAppearance(newSettingsPage(stack, "appearance", "Appearance"))
 	s.buildTabs(newSettingsPage(stack, "tabs", "Tabs"))
 	s.buildTerminal(newSettingsPage(stack, "terminal", "Terminal"))
+	s.buildKeyboard(newSettingsPage(stack, "keyboard", "Keyboard"))
 	s.buildAdvanced(newSettingsPage(stack, "advanced", "Advanced"))
 
 	sidebar := gtk.NewStackSidebar()
@@ -298,6 +300,50 @@ func (s *settingsWindow) buildTerminal(p *settingsPage) {
 	g.row("Memory cap (MiB)", "0 turns the cap off; wide windows keep fewer lines under a cap", s.scrollbackMB)
 }
 
+// buildKeyboard lists bunk's pane bindings (from [keys]) and bunker's own
+// window shortcuts. Keys are shown, not yet editable here.
+func (s *settingsWindow) buildKeyboard(p *settingsPage) {
+	s.keyLabels = make(map[string]*gtk.Label)
+	groups := []struct {
+		title   string
+		actions []string
+	}{
+		{"Panes", []string{"split", "split_context", "zoom", "nav_left", "nav_right", "nav_up", "nav_down", "passthrough"}},
+		{"Search", []string{"search", "search_next", "search_prev", "search_exit"}},
+		{"Clipboard and Scrollback", []string{"copy", "paste", "scroll_up", "scroll_down"}},
+	}
+	desc := make(map[string]string, len(keybindingDefaults))
+	for _, e := range keybindingDefaults {
+		desc[e.action] = e.desc
+	}
+	for i, grp := range groups {
+		note := ""
+		if i == 0 {
+			note = "bunk's bindings, set under [keys] in the config file. Ctrl+F12 passthrough sends every other key to the program."
+		}
+		g := p.group(grp.title, note)
+		for _, action := range grp.actions {
+			key := gtk.NewLabel("")
+			key.AddCSSClass("bunker-key")
+			s.keyLabels[action] = key
+			g.row(desc[action], "", key)
+		}
+	}
+	g := p.group("Window", "bunker's own shortcuts.")
+	for _, sc := range [][2]string{
+		{"New tab / close tab", "Ctrl+Shift+T / Ctrl+Shift+W"},
+		{"Previous / next tab", "Ctrl+PgUp / Ctrl+PgDn"},
+		{"Copy / paste (system clipboard)", "Ctrl+Shift+C / Ctrl+Shift+V"},
+		{"Font bigger / smaller / reset", "Ctrl+Shift+= / - / 0"},
+		{"Preferences", "Ctrl+,"},
+		{"Close window", "Ctrl+Shift+Q (or bunk's quit key)"},
+	} {
+		key := gtk.NewLabel(sc[1])
+		key.AddCSSClass("bunker-key")
+		g.row(sc[0], "", key)
+	}
+}
+
 func (s *settingsWindow) buildAdvanced(p *settingsPage) {
 	g := p.group("Config File", "Everything here is stored in this file. Edits saved in any editor apply immediately, and settings changed here keep your comments.")
 	open := gtk.NewButtonWithLabel("Open in Editor")
@@ -351,6 +397,11 @@ func (s *settingsWindow) load(cfg Config) {
 	s.tabsCollapse.SetActive(cfg.Tabs.Collapsed)
 	s.scrollback.SetValue(float64(cfg.Scrollback))
 	s.scrollbackMB.SetValue(float64(cfg.ScrollbackBytes >> 20))
+	for _, e := range keybindingDefaults {
+		if l := s.keyLabels[e.action]; l != nil {
+			l.SetText(e.field(&cfg.Keybindings).raw)
+		}
+	}
 }
 
 // guiMonospaceOnly keeps the font chooser to fixed-width families; a

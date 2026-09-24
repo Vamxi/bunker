@@ -25,7 +25,8 @@ gui.go              GTK application, window, actions, config watch/reload/apply
 gui_tabs.go         Tabs: one App + termView per tab in a GtkStack; tab strip
 gui_settings.go     Preferences window (writes keys via tomledit.go)
 tomledit.go         Comment-preserving single-key TOML edits, atomic config writes
-gui_view.go         termView widget: frame capture under Pane.mu, snapshot drawing
+gui_view.go         termView widget: fonts, sizing, row drawing
+gui_panes.go        Split-tree rendering: per-pane frames, separators, badges, search bar
 gui_glyphs.go       Procedural box drawing, blocks, braille
 gui_input.go        GDK keys → tcell events → keyToBytesMode; mouse; clipboard
 gui_debug.go        BUNKER_SCREENSHOT (C helper) and BUNKER_CPUPROFILE hooks
@@ -110,8 +111,12 @@ while holding `Pane.mu`.
 
 - GTK calls stay on the main thread; goroutines reach it only via
   `glib.IdleAdd` (see `termView.requestDraw`).
-- The GUI reuses `App` as the pane model (one per tab) with no tcell screen:
-  never call code paths that touch `app.screen` from GUI code.
+- The GUI reuses `App` as the pane model (one per tab) with no tcell screen.
+  Keys go through `App.handleKey` and mouse through `App.handleMouse`, so bunk's
+  multiplexer behaves the same in both frontends. Screen-dependent paths are
+  guarded (`viewSize`/`sizeFn`, `onEmpty`, `reinitHost` only with a screen);
+  keep new App code free of `app.screen` or add the same kind of hook.
+- Status badges come from `paneBadges`, shared by the TUI and the GUI.
 - The config file is the source of truth. GUI changes go through
   `guiWin.setKey` → file → `reload` → `apply`; `apply` must stay idempotent
   because every write also triggers the directory monitor.

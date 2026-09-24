@@ -76,8 +76,51 @@ func (v *termView) keyPressed(keyval, _ uint, state gdk.ModifierType) bool {
 	ctrl := state&gdk.ControlMask != 0
 	shift := state&gdk.ShiftMask != 0
 
-	// Window actions (GNOME Terminal conventions). Handled here because the
-	// terminal consumes keys before the window's accelerators see them.
+	v.app.mu.Lock()
+	p := v.app.active
+	v.app.mu.Unlock()
+	if p == nil || p.isDead() {
+		return false
+	}
+	p.mu.Lock()
+	passthrough := p.passthrough
+	kitty := 0
+	if len(p.kittyStack) > 0 {
+		kitty = p.kittyStack[len(p.kittyStack)-1]
+	}
+	p.mu.Unlock()
+
+	// With bunk's keyboard passthrough on (Ctrl+F12) every key except the
+	// toggle reaches the program, window shortcuts included.
+	if !passthrough && v.windowShortcut(keyval, ctrl, shift) {
+		return true
+	}
+
+	ev, raw := gdkKeyEvent(keyval, state, kitty)
+	if ev == nil && raw == nil {
+		return false // modifier-only or unmapped key: let GTK have it
+	}
+	if raw != nil {
+		if v.app.searchMode {
+			return true // the search bar takes typed text only
+		}
+		v.resetViewForInput(p)
+		p.writeInput(raw)
+		return true
+	}
+	// bunk's key handling: splits, zoom, pane navigation, search, copy and
+	// paste, scrollback, passthrough, then the pane. It asks to quit with
+	// false, which closes the window here.
+	if !v.app.handleKey(ev) {
+		v.ActivateAction("win.close-window", nil)
+	}
+	return true
+}
+
+// windowShortcut handles bunker's own keys: tabs, preferences, clipboard,
+// font zoom. They use Ctrl+Shift or GNOME conventions so they don't collide
+// with bunk's bindings.
+func (v *termView) windowShortcut(keyval uint, ctrl, shift bool) bool {
 	if ctrl {
 		action := ""
 		switch lower := gdk.KeyvalToLower(keyval); {
@@ -97,8 +140,6 @@ func (v *termView) keyPressed(keyval, _ uint, state gdk.ModifierType) bool {
 			return true
 		}
 	}
-
-	// Terminal-level shortcuts (kitty/GNOME conventions: Ctrl+Shift+…).
 	if ctrl && shift {
 		switch gdk.KeyvalToLower(keyval) {
 		case gdk.KEY_c:
@@ -118,44 +159,11 @@ func (v *termView) keyPressed(keyval, _ uint, state gdk.ModifierType) bool {
 			return true
 		}
 	}
-	if shift && !ctrl {
-		switch keyval {
-		case gdk.KEY_Page_Up, gdk.KEY_KP_Page_Up:
-			v.scrollPage(-1)
-			return true
-		case gdk.KEY_Page_Down, gdk.KEY_KP_Page_Down:
-			v.scrollPage(1)
-			return true
-		case gdk.KEY_Insert, gdk.KEY_KP_Insert:
-			v.pasteClipboard()
-			return true
-		}
-	}
-
-	v.app.mu.Lock()
-	p := v.app.active
-	v.app.mu.Unlock()
-	if p == nil || p.isDead() {
-		return false
-	}
-	p.mu.Lock()
-	kitty := 0
-	if len(p.kittyStack) > 0 {
-		kitty = p.kittyStack[len(p.kittyStack)-1]
-	}
-	p.mu.Unlock()
-
-	ev, raw := gdkKeyEvent(keyval, state, kitty)
-	if ev == nil && raw == nil {
-		return false // modifier-only or unmapped key: let GTK have it
-	}
-	if raw != nil {
-		v.resetViewForInput(p)
-		p.writeInput(raw)
+	if shift && !ctrl && (keyval == gdk.KEY_Insert || keyval == gdk.KEY_KP_Insert) {
+		v.pasteClipboard()
 		return true
 	}
-	v.app.forwardKey(ev)
-	return true
+	return false
 }
 
 // resetViewForInput mirrors App.forwardKey for raw byte input.
@@ -324,26 +332,6 @@ func altPrefix(mod tcell.ModMask, b []byte) []byte {
 		return append([]byte{0x1b}, b...)
 	}
 	return b
-}
-
-// ---------------------------------------------------------------------------
-// Scrollback
-// ---------------------------------------------------------------------------
-
-func (v *termView) scrollPage(dir int) {
-	v.app.mu.Lock()
-	p := v.app.active
-	v.app.mu.Unlock()
-	if p == nil {
-		return
-	}
-	n := max(1, v.rows-1)
-	if dir < 0 {
-		p.scrollUp(n)
-	} else {
-		p.scrollDown(n)
-	}
-	v.app.triggerRedraw()
 }
 
 // ---------------------------------------------------------------------------

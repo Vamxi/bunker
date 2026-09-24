@@ -760,22 +760,27 @@ func statusOverlayKeyLocked(p *Pane, now time.Time) string {
 	)
 }
 
-// drawPaneStatus draws compact status badges in the top-right corner of
-// pane p.  Badges are drawn right-to-left so the highest-priority badge
-// (passthrough, then scroll count) is closest to the edge and always visible.
+// paneBadge is one status badge: text and colours derived from the theme.
+type paneBadge struct {
+	text   string
+	fg, bg tcell.Color
+}
+
+// paneBadges lists pane p's status badges in display order, left to right;
+// the last one is the most important (drawn closest to the edge):
 //
-// Badge order (right to left):
+//	[ COPIED ]         - temporary flash message
+//	[ ZOOM ]           - pane is zoomed
+//	[⬡ my-toolbox]     - container / ssh / sudo context
+//	[-N]               - scrollback line count
+//	[ PASS ]           - keyboard passthrough
 //
-//	[ PASS ]                - keyboard passthrough (toggle remains reserved)
-//	[-N]                    - scrollback line count (yellow on black)
-//	[ COPIED ]              - temporary flash message (white on green)
-//	[⬡ my-toolbox]          - container/sudo/ssh context badge
-func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, zoomed bool) {
+// Shared by the TUI (drawPaneStatus) and the GUI.
+func paneBadges(p *Pane, rt resolvedTheme, zoomed bool) []paneBadge {
 	p.mu.Lock()
 	fgProc := p.fgProcess
 	containerID := p.containerID
 	containerType := p.containerType
-	px, py, pw := p.x, p.y, p.w
 	sbOff := p.sbOff
 	tempMsg := p.statusMsg
 	tempActive := !p.statusMsgEnd.IsZero() && time.Now().Before(p.statusMsgEnd)
@@ -800,96 +805,87 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, 
 	colorCyan := dim(rt.palette[6])  // container
 	colorDark := rt.palette[0]       // scroll count background
 
-	// A badge is a styled run of text.
-	type badge struct {
-		text  string
-		style tcell.Style
-	}
-	// Collect badges left-to-right in display order (rightmost drawn last,
-	// closest to the edge).
-	var badges []badge
-
-	// 1. Temporary flash message (e.g. "COPIED") - leftmost badge.
+	var badges []paneBadge
 	if tempActive && tempMsg != "" {
-		badges = append(badges, badge{
-			" " + tempMsg + " ",
-			tcell.StyleDefault.Foreground(badgeText).Background(colorGreen).Bold(true),
-		})
+		badges = append(badges, paneBadge{" " + tempMsg + " ", badgeText, colorGreen})
 	}
-
-	// 1b. Zoom indicator.
 	if zoomed {
-		badges = append(badges, badge{
-			" ZOOM ",
-			tcell.StyleDefault.Foreground(colorYellow).Background(colorDark).Bold(true),
-		})
+		badges = append(badges, paneBadge{" ZOOM ", colorYellow, colorDark})
 	}
-
-	// 2. Container / SSH / sudo context badge.
-	{
-		var parts []string
-		if containerType != "" {
-			icon := "⬡"
-			if containerType == "distrobox" {
-				icon = "▣"
-			}
-			label := containerType
-			if containerID != "" {
-				label = containerID
-			}
-			parts = append(parts, icon+" "+label)
-		}
-		switch fgProc {
-		case "ssh", "mosh":
-			label := "⇄"
-			if sshHost != "" {
-				label += " " + sshHost
-			} else {
-				label += " " + fgProc
-			}
-			parts = append(parts, label)
+	if text, kind := paneContext(fgProc, containerType, containerID, sshHost); text != "" {
+		bg := colorDark
+		switch kind {
 		case "sudo":
-			parts = append(parts, "sudo")
-		case "su":
-			parts = append(parts, "su")
+			bg = colorRed
+		case "ssh":
+			bg = colorBlue
+		case "container":
+			bg = colorCyan
 		}
-		if len(parts) > 0 {
-			var bg tcell.Color
-			switch {
-			case fgProc == "sudo" || fgProc == "su":
-				bg = colorRed
-			case fgProc == "ssh":
-				bg = colorBlue
-			case containerType != "":
-				bg = colorCyan
-			default:
-				bg = colorDark
-			}
-			badges = append(badges, badge{
-				" " + strings.Join(parts, " · ") + " ",
-				tcell.StyleDefault.Foreground(badgeText).Background(bg).Bold(true),
-			})
-		}
+		badges = append(badges, paneBadge{" " + text + " ", badgeText, bg})
 	}
-
-	// 3. Scroll line count (below passthrough in priority).
 	if sbOff > 0 {
-		badges = append(badges, badge{
-			fmt.Sprintf(" -%d ", sbOff),
-			tcell.StyleDefault.Foreground(colorYellow).Background(colorDark).Bold(true),
-		})
+		badges = append(badges, paneBadge{fmt.Sprintf(" -%d ", sbOff), colorYellow, colorDark})
 	}
-
 	if passthrough {
-		badges = append(badges, badge{
-			" PASS ",
-			tcell.StyleDefault.Foreground(badgeText).Background(colorCyan).Bold(true),
-		})
+		badges = append(badges, paneBadge{" PASS ", badgeText, colorCyan})
 	}
+	return badges
+}
 
+// paneContext describes where a pane's shell runs: container, SSH host,
+// or elevated shell, e.g. "⬡ mybox · ⇄ host". kind is the one that colours
+// it ("sudo" over "ssh" over "container"); both are "" on the plain host.
+func paneContext(fgProc, containerType, containerID, sshHost string) (text, kind string) {
+	var parts []string
+	if containerType != "" {
+		icon := "⬡"
+		if containerType == "distrobox" {
+			icon = "▣"
+		}
+		label := containerType
+		if containerID != "" {
+			label = containerID
+		}
+		parts = append(parts, icon+" "+label)
+		kind = "container"
+	}
+	switch fgProc {
+	case "ssh", "mosh":
+		label := "⇄"
+		if sshHost != "" {
+			label += " " + sshHost
+		} else {
+			label += " " + fgProc
+		}
+		parts = append(parts, label)
+		if fgProc == "ssh" {
+			kind = "ssh"
+		}
+	case "sudo", "su":
+		parts = append(parts, fgProc)
+		kind = "sudo"
+	}
+	return strings.Join(parts, " · "), kind
+}
+
+// context is paneContext for a pane; p.mu must not be held.
+func (p *Pane) context() (text, kind string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return paneContext(p.fgProcess, p.containerType, p.containerID, p.sshHost)
+}
+
+// drawPaneStatus draws pane p's badges in its top-right corner (TUI).
+func drawPaneStatus(scr tcell.Screen, p *Pane, _ bool, rt resolvedTheme, zoomed bool) {
+	badges := paneBadges(p, rt, zoomed)
 	if len(badges) == 0 {
 		return
 	}
+	p.mu.Lock()
+	px, py, pw := p.x, p.y, p.w
+	sbOff := p.sbOff
+	p.mu.Unlock()
 
 	// Draw right-to-left: last badge in the slice goes closest to the edge.
 	rightEdge := px + pw
@@ -903,8 +899,9 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, 
 		if startX < px {
 			break // no more room
 		}
+		style := tcell.StyleDefault.Foreground(badges[i].fg).Background(badges[i].bg).Bold(true)
 		for j, ch := range runes {
-			scr.SetContent(startX+j, py, ch, nil, badges[i].style)
+			scr.SetContent(startX+j, py, ch, nil, style)
 		}
 		rightEdge = startX
 	}

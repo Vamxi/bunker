@@ -14,7 +14,6 @@
 package main
 
 import (
-	"io"
 	"math"
 	"strings"
 	"sync/atomic"
@@ -77,38 +76,19 @@ type termView struct {
 	reflowTimer *time.Timer
 
 	layouts map[layoutKey]*layoutEntry
+	frames  map[*Pane]*paneFrame // last captured state of each visible pane
 
-	// Frame-local copy of the visible grid.
-	grid      [][]vt10x.Glyph
-	frameRows int
-
-	focused  bool
-	title    string
-	queued   atomic.Bool
-	onTitle  func(string)
-	onSpawn  func(cols, rows int) (*Pane, error)
-	rect     *graphene.Rect
-	point    *graphene.Point
-	lastSnap snapState
+	focused bool
+	title   string
+	queued  atomic.Bool
+	onTitle func(string)
+	onSpawn func(cols, rows int) (*Pane, error)
+	rect    *graphene.Rect
+	point   *graphene.Point
 
 	mouseBtn  tcell.ButtonMask
 	mouseCell [2]int
 	scrollAcc float64
-}
-
-// snapState is everything copied out of the pane for one frame.
-type snapState struct {
-	cursor      vt10x.Cursor
-	cursorOn    bool
-	cursorColor tcell.Color
-	selActive   bool
-	selStart    selPos
-	selEnd      selPos
-	sbCount     int
-	sbOff       int
-	cols, rows  int
-	firstVRow   int
-	valid       bool
 }
 
 var termViewType = coreglib.RegisterSubclassWithConstructor[*termView](
@@ -129,6 +109,10 @@ func newTermView(app *App, cfg Config) *termView {
 	v.pad = float64(cfg.Padding)
 	v.fontBase = cfg.Font
 	v.layouts = make(map[layoutKey]*layoutEntry)
+	v.frames = make(map[*Pane]*paneFrame)
+	// bunk sizes a zoomed pane to the whole grid; see sizeAllocate for the
+	// extra column.
+	app.sizeFn = func() (int, int) { return v.cols + 1, v.rows }
 	v.rect = graphene.RectAlloc()
 	v.point = graphene.NewPointAlloc()
 	v.SetFocusable(true)
@@ -201,6 +185,11 @@ func (v *termView) setFont(base string, size float64) {
 		v.cellH = 16
 	}
 	clear(v.layouts)
+	if v.app != nil { // bunk picks the split direction in pixels
+		v.app.mu.Lock()
+		v.app.cellAspect = v.cellH / v.cellW
+		v.app.mu.Unlock()
+	}
 	L.Debug("gui: font metrics", "font", base, "size", v.fontSize, "cellW", v.cellW, "cellH", v.cellH)
 }
 
@@ -246,11 +235,16 @@ func (v *termView) sizeAllocate(width, height, _ int) {
 		return
 	}
 
-	// Panes reserve their rightmost column for bunk's scrollbar; the GUI
-	// draws its scrollbar in the padding, so give the pane one extra column.
+	// Panes reserve their rightmost column for the scrollbar. The tree gets
+	// one extra column so the rightmost pane's lands in the right padding
+	// instead of costing a text column.
 	app.mu.Lock()
 	if app.root != nil {
 		app.root.resizePTYOnly(0, 0, cols+1, rows)
+	}
+	if z := app.zoomedPane; z != nil {
+		app.zoomGeom = [4]int{z.x, z.y, z.w, z.h}
+		z.resizePTYOnly(0, 0, cols+1, rows)
 	}
 	app.mu.Unlock()
 	if v.reflowTimer != nil {
@@ -260,6 +254,10 @@ func (v *termView) sizeAllocate(width, height, _ int) {
 		app.mu.Lock()
 		if app.root != nil {
 			app.root.resize(0, 0, cols+1, rows)
+		}
+		if z := app.zoomedPane; z != nil {
+			app.zoomGeom = [4]int{z.x, z.y, z.w, z.h}
+			z.resize(0, 0, cols+1, rows)
 		}
 		app.mu.Unlock()
 		app.triggerRedraw()
@@ -278,133 +276,14 @@ func (v *termView) requestDraw() {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Frame capture
-// ---------------------------------------------------------------------------
-
-// capture copies the visible rows out of the pane. It returns false when the
-// pane is mid-update (DEC 2026 or a transient clear) and the previous frame
-// should be shown unchanged.
-func (v *termView) capture(p *Pane) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.term.Mode()&vt10x.ModeSync != 0 || p.transientLineClear {
-		return false
-	}
-	cols, rows := p.term.Size()
-	s := &v.lastSnap
-	s.cols, s.rows = cols, rows
-	s.sbCount, s.sbOff = p.sb.count, p.sbOff
-	s.firstVRow = s.sbCount - s.sbOff
-	s.cursor = p.term.Cursor()
-	s.cursorOn = !p.dead && p.term.CursorVisible() && s.sbOff == 0 &&
-		!p.progressCursorHiddenUntil.After(time.Now())
-	s.cursorColor = oscCursorColor(p.themeCursorColor)
-	if c, ok := p.term.ColorOverride(vt10x.DefaultCursor); ok {
-		s.cursorColor = tcell.NewRGBColor(int32(c>>16&255), int32(c>>8&255), int32(c&255))
-	}
-	s.selActive = p.selActive
-	s.selStart, s.selEnd = p.selNorm()
-	s.valid = true
-	p.term.ConsumeDirty()
-
-	if cap(v.grid) < rows {
-		v.grid = make([][]vt10x.Glyph, rows)
-	}
-	v.grid = v.grid[:rows]
-	for row := range rows {
-		line := v.grid[row]
-		if cap(line) < cols {
-			line = make([]vt10x.Glyph, cols)
-		}
-		line = line[:cols]
-		vRow := s.firstVRow + row
-		var ring []vt10x.Glyph
-		live := true
-		termRow := row
-		if s.sbOff > 0 {
-			switch {
-			case vRow < 0:
-				live, ring = false, nil
-			case vRow < s.sbCount:
-				live, ring = false, p.sb.get(vRow)
-			default:
-				termRow = vRow - s.sbCount
-			}
-		}
-		for col := range cols {
-			g := vt10x.Glyph{FG: vt10x.DefaultFG, BG: vt10x.DefaultBG, UL: vt10x.DefaultUL}
-			if live {
-				g = p.term.RawCell(col, termRow)
-			} else if col < len(ring) {
-				g = ring[col]
-			}
-			if fg, ok := p.term.ColorOverride(g.FG); ok {
-				g.FG = fg
-			}
-			if bg, ok := p.term.ColorOverride(g.BG); ok {
-				g.BG = bg
-			}
-			g.Link = 0 // links do not affect painting; keeps row keys stable
-			line[col] = g
-		}
-		v.grid[row] = line
-	}
-	v.frameRows = rows
-
-	if t := p.term.Title(); t != v.title {
-		v.title = t
-		if v.onTitle != nil {
-			title := sanitizeTitle(t)
-			coreglib.IdleAdd(func() { v.onTitle(title) })
-		}
-	}
-	return true
-}
-
-// ---------------------------------------------------------------------------
-// Snapshot
-// ---------------------------------------------------------------------------
-
-func (v *termView) snapshot(s *gtk.Snapshot) {
-	defer guiRecover("snapshot")
-	w, h := float32(v.Width()), float32(v.Height())
-	rt := v.theme
-	v.fillRect(s, 0, 0, float64(w), float64(h), rgba(rt.bg, 1))
-
-	v.app.mu.Lock()
-	p := v.app.active
-	v.app.mu.Unlock()
-	if p == nil {
-		return
-	}
-	v.app.oscBuf.flush(io.Discard) // host passthrough has no GUI target yet
-	if !v.capture(p) && !v.lastSnap.valid {
-		return
-	}
-
-	for row := 0; row < v.frameRows; row++ {
-		s.Save()
-		s.Translate(v.pt(v.pad, v.pad+float64(row)*v.cellH))
-		v.drawRow(s, v.grid[row])
-		s.Restore()
-	}
-	if len(v.layouts) > guiLayoutCacheMx {
-		clear(v.layouts)
-	}
-
-	v.drawSelection(s)
-	v.drawCursor(s)
-	v.drawScrollbar(s, float64(h))
-}
-
-// drawRow paints one row with the snapshot origin at the row's top-left.
+// drawRow paints one row of a pane whose first column is grid column base;
+// the snapshot origin is the grid's left edge at the row's top.
 //
 // Rows are re-emitted every frame: gotk4 wraps GskRenderNode (a fundamental
 // type, not a GObject) with GObject refcounting, so retained nodes are not
 // safe. Shaped Pango layouts are cached instead, and GSK caches the glyphs.
-func (v *termView) drawRow(rs *gtk.Snapshot, cells []vt10x.Glyph) {
+func (v *termView) drawRow(rs *gtk.Snapshot, cells []vt10x.Glyph, base int) {
+	colX := func(col int) float64 { return v.colX(base + col) }
 	rt := v.theme
 	n := len(cells)
 
@@ -413,7 +292,7 @@ func (v *termView) drawRow(rs *gtk.Snapshot, cells []vt10x.Glyph) {
 		c := &cells[col]
 		if c.Image() != nil {
 			bg := vtColor(c.BG, rt.bg, rt)
-			x0, x1 := v.colX(col), v.colX(col+1)
+			x0, x1 := colX(col), colX(col+1)
 			v.fillRect(rs, x0, 0, x1-x0, v.cellH/2, rgba(imageColor(c.Image().Top, bg), 1))
 			v.fillRect(rs, x0, v.cellH/2, x1-x0, v.cellH-v.cellH/2, rgba(imageColor(c.Image().Bottom, bg), 1))
 			col++
@@ -425,7 +304,7 @@ func (v *termView) drawRow(rs *gtk.Snapshot, cells []vt10x.Glyph) {
 			end++
 		}
 		if bg != rt.bg {
-			x0, x1 := v.colX(col), v.colX(end)
+			x0, x1 := colX(col), colX(end)
 			v.fillRect(rs, x0, 0, x1-x0, v.cellH, rgba(bg, 1))
 		}
 		col = end
@@ -440,7 +319,7 @@ func (v *termView) drawRow(rs *gtk.Snapshot, cells []vt10x.Glyph) {
 	flush := func() {
 		if runStart >= 0 {
 			if text := strings.TrimRight(run.String(), " "); text != "" {
-				v.drawText(rs, text, runVariant, v.colX(runStart), runFG)
+				v.drawText(rs, text, runVariant, colX(runStart), runFG)
 			}
 		}
 		run.Reset()
@@ -478,8 +357,8 @@ func (v *termView) drawRow(rs *gtk.Snapshot, cells []vt10x.Glyph) {
 		if c.Width == 2 {
 			cw = 2
 		}
-		if !v.drawSpecial(rs, ch, col, cw, fg) {
-			v.drawText(rs, string(ch)+c.Combining(), variant, v.colX(col), fg)
+		if !v.drawSpecial(rs, ch, base+col, cw, fg) {
+			v.drawText(rs, string(ch)+c.Combining(), variant, colX(col), fg)
 		}
 	}
 	flush()
@@ -495,12 +374,12 @@ func (v *termView) drawRow(rs *gtk.Snapshot, cells []vt10x.Glyph) {
 			continue
 		}
 		fg, _ := v.cellStyle(c)
-		x0 := v.colX(col)
+		x0 := colX(col)
 		wcols := 1
 		if c.Width == 2 {
 			wcols = 2
 		}
-		x1 := v.colX(col + wcols)
+		x1 := colX(col + wcols)
 		if c.Mode&vtAttrUnderline != 0 {
 			ul := fg
 			if c.Mode&vtAttrHasULColor != 0 {
@@ -587,100 +466,6 @@ func (v *termView) drawUnderline(s *gtk.Snapshot, x0, x1 float64, style int16, c
 	default:
 		v.fillRect(s, x0, y, x1-x0, t, c)
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Overlays
-// ---------------------------------------------------------------------------
-
-func (v *termView) drawSelection(s *gtk.Snapshot) {
-	st := &v.lastSnap
-	if !st.selActive {
-		return
-	}
-	c := rgba(v.theme.fg, 0.28)
-	for row := 0; row < v.frameRows; row++ {
-		vRow := st.firstVRow + row
-		if vRow < st.selStart.row || vRow > st.selEnd.row {
-			continue
-		}
-		c0, c1 := 0, st.cols-1
-		if vRow == st.selStart.row {
-			c0 = st.selStart.col
-		}
-		if vRow == st.selEnd.row {
-			c1 = st.selEnd.col
-		}
-		if c1 < c0 {
-			continue
-		}
-		x0, x1 := v.colX(c0), v.colX(c1+1)
-		v.fillRect(s, v.pad+x0, v.pad+float64(row)*v.cellH, x1-x0, v.cellH, c)
-	}
-}
-
-func (v *termView) drawCursor(s *gtk.Snapshot) {
-	st := &v.lastSnap
-	cur := st.cursor
-	if !st.cursorOn || cur.Y < 0 || cur.Y >= v.frameRows || cur.X < 0 || cur.X >= st.cols {
-		return
-	}
-	cell := v.grid[cur.Y][cur.X]
-	wcols := 1
-	if cell.Width == 2 {
-		wcols = 2
-	}
-	x := v.pad + v.colX(cur.X)
-	w := v.colX(cur.X+wcols) - v.colX(cur.X)
-	y := v.pad + float64(cur.Y)*v.cellH
-	color := st.cursorColor
-	if color == tcell.ColorDefault || color == tcell.ColorReset {
-		color = v.theme.fg
-	}
-	cc := rgba(color, 1)
-	thick := max(1, math.Round(v.cellH/12))
-
-	if !v.focused {
-		v.fillRect(s, x, y, w, 1, cc)
-		v.fillRect(s, x, y+v.cellH-1, w, 1, cc)
-		v.fillRect(s, x, y, 1, v.cellH, cc)
-		v.fillRect(s, x+w-1, y, 1, v.cellH, cc)
-		return
-	}
-	switch cur.Shape {
-	case 3, 4:
-		v.fillRect(s, x, y+v.cellH-thick, w, thick, cc)
-	case 5, 6:
-		v.fillRect(s, x, y, max(2, thick), v.cellH, cc)
-	default:
-		v.fillRect(s, x, y, w, v.cellH, cc)
-		ch := cell.Char
-		if ch == 0 || ch == ' ' || cell.Mode&vtAttrInvisible != 0 || cell.Image() != nil {
-			return
-		}
-		bg := vtColor(cell.BG, v.theme.bg, v.theme)
-		_, variant := v.cellStyle(&cell)
-		s.Save()
-		s.Translate(v.pt(v.pad, y))
-		if !v.drawSpecial(s, ch, cur.X, wcols, bg) {
-			v.drawText(s, string(ch)+cell.Combining(), variant, v.colX(cur.X), bg)
-		}
-		s.Restore()
-	}
-}
-
-func (v *termView) drawScrollbar(s *gtk.Snapshot, height float64) {
-	st := &v.lastSnap
-	if st.sbOff == 0 || st.sbCount == 0 {
-		return
-	}
-	total := float64(st.sbCount + st.rows)
-	track := height - 2*v.pad
-	thumbH := max(12, track*float64(st.rows)/total)
-	top := v.pad + (track-thumbH)*float64(st.sbCount-st.sbOff)/float64(st.sbCount)
-	const thumbW = 4.0
-	x := float64(v.Width()) - max(v.pad, thumbW+2)/2 - thumbW/2
-	v.fillRect(s, x, top, thumbW, thumbH, rgba(v.theme.scrollThumb, 0.8))
 }
 
 // ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/diamondburned/gotk4/pkg/pango"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -46,6 +47,8 @@ type guiWin struct {
 	layout      *gtk.Box
 	themeCSS    *gtk.CSSProvider
 	sidebarBtn  *gtk.Button
+	headTitle   *gtk.Label
+	headSub     *gtk.Label
 	collapsed   bool // this window's sidebar state; starts from [tabs] collapsed
 
 	cfg           Config
@@ -207,6 +210,7 @@ func (gw *guiWin) build(command []string) {
 	})
 	gw.watchConfig()
 	gw.pollTitles()
+	gw.runDebugKeys()
 }
 
 func (gw *guiWin) headerBar() *gtk.HeaderBar {
@@ -230,7 +234,22 @@ func (gw *guiWin) headerBar() *gtk.HeaderBar {
 	gw.sidebarBtn.SetFocusOnClick(false)
 	gw.sidebarBtn.SetActionName("win.toggle-tabs")
 
+	// Title and a subtitle with the focused pane's directory and context
+	// (container, SSH host, sudo), like Ptyxis.
+	gw.headTitle = gtk.NewLabel("bunker")
+	gw.headTitle.AddCSSClass("title")
+	gw.headTitle.SetEllipsize(pango.EllipsizeEnd)
+	gw.headSub = gtk.NewLabel("")
+	gw.headSub.AddCSSClass("bunker-subtitle")
+	gw.headSub.SetEllipsize(pango.EllipsizeMiddle)
+	gw.headSub.SetVisible(false)
+	titleBox := gtk.NewBox(gtk.OrientationVertical, 0)
+	titleBox.SetVAlign(gtk.AlignCenter)
+	titleBox.Append(gw.headTitle)
+	titleBox.Append(gw.headSub)
+
 	bar := gtk.NewHeaderBar()
+	bar.SetTitleWidget(titleBox)
 	bar.PackStart(gw.sidebarBtn)
 	bar.PackStart(newTab)
 	bar.PackEnd(button)
@@ -248,6 +267,7 @@ func (gw *guiWin) installActions() {
 	}
 	add("preferences", []string{"<Control>comma"}, gw.openSettings)
 	add("open-config", nil, gw.openConfigFile)
+	add("close-window", []string{"<Control><Shift>q"}, func() { gw.win.Close() })
 	add("new-tab", []string{"<Control><Shift>t"}, func() { gw.newTab(gw.activeCwd(), nil) })
 	add("close-tab", []string{"<Control><Shift>w"}, func() {
 		if gw.active != nil {
@@ -380,6 +400,21 @@ func (gw *guiWin) apply(cfg Config) {
 	L.Info("config: applied", "theme", cfg.ThemeName, "font", cfg.Font, "padding", cfg.Padding, "tabs", cfg.Tabs.Position)
 }
 
+// setWindowTitle shows the active tab in the header bar and window title.
+func (gw *guiWin) setWindowTitle(info tabInfo) {
+	gw.win.SetTitle(info.title)
+	gw.headTitle.SetText(info.title)
+	var sub []string
+	if info.cwd != "" {
+		sub = append(sub, tildePath(info.cwd))
+	}
+	if info.context != "" {
+		sub = append(sub, info.context)
+	}
+	gw.headSub.SetText(strings.Join(sub, "  ·  "))
+	gw.headSub.SetVisible(len(sub) > 0)
+}
+
 func (gw *guiWin) applyDarkPreference() {
 	if s := gtk.SettingsGetDefault(); s != nil {
 		r, g, b := gw.cfg.Theme.bg.RGB()
@@ -459,6 +494,10 @@ list.bunker-card > row:last-child {
 .bunker-row {
 	padding: 10px 14px;
 	min-height: 34px;
+}
+.bunker-key {
+	font-family: monospace;
+	opacity: 0.8;
 }
 .bunker-settings-error {
 	background-color: #c01c28;
