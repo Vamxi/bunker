@@ -2,8 +2,8 @@
 //
 // Each tab owns a complete bunk pane model (an App with its own redraw,
 // paneDead, and done channels) and a termView. Views live in a GtkStack, so
-// only the visible tab is drawn; background tabs keep running and flag
-// activity. The strip is a sidebar (left/right) or a bar (top/bottom),
+// only the visible tab is drawn; background tabs keep running.
+// The strip is a sidebar (left/right) or a bar (top/bottom),
 // rebuilt in place when [tabs] position changes.
 package main
 
@@ -24,6 +24,7 @@ import (
 const (
 	guiTitlePollSeconds = 1  // tab titles follow cwd/process changes
 	guiCollapsedWidth   = 46 // sidebar width when collapsed to one character
+	guiMenuSettleMs     = 80 // wait after a menu closes before moving focus
 )
 
 type guiTab struct {
@@ -36,8 +37,7 @@ type guiTab struct {
 	closeBtn *gtk.Button
 	title    *gtk.Label
 	entry    *gtk.Entry // rename field, shown while editing
-	activity *gtk.Label
-	lastSeen string // last title shown
+	lastSeen string     // last title shown
 	closed   bool
 
 	customTitle string // set by renaming; "" = follow the program's title
@@ -45,8 +45,7 @@ type guiTab struct {
 	renameFrom  string // entry text when editing started
 	recollapse  bool   // rename expanded a collapsed sidebar; collapse after
 
-	menu          *gtk.PopoverMenu // right-click menu, created on first use
-	pendingRename bool             // "Rename…" chosen; start once the menu closes
+	menu *gtk.PopoverMenu // right-click menu, created on first use
 }
 
 // newTabApp builds the pane model for one tab from the current config.
@@ -125,8 +124,8 @@ func (gw *guiWin) newTab(dir string, command []string) *guiTab {
 	return t
 }
 
-// redrawBridge turns pane redraw signals into coalesced draws for the
-// visible tab, and an activity mark for background tabs.
+// redrawBridge turns pane redraw signals into coalesced draws; a hidden
+// tab's view is not snapshotted, so its requests cost nothing.
 func (t *guiTab) redrawBridge() {
 	app := t.app
 	for {
@@ -135,11 +134,6 @@ func (t *guiTab) redrawBridge() {
 			sleepRenderSettle()
 			drainRedraw(app.redraw)
 			t.view.requestDraw()
-			coreglib.IdleAdd(func() {
-				if t != t.gw.active && !t.closed {
-					t.setActivity(true)
-				}
-			})
 		case <-app.done:
 			return
 		}
@@ -147,12 +141,6 @@ func (t *guiTab) redrawBridge() {
 }
 
 func (t *guiTab) buildRow() {
-	t.activity = gtk.NewLabel("●")
-	t.activity.AddCSSClass("bunker-tab-activity")
-	t.activity.SetTooltipText("New output")
-	t.activity.SetVAlign(gtk.AlignCenter)
-	t.activity.SetVisible(false)
-
 	// Every child is centred vertically: titles often start with a symbol
 	// from a fallback font (Claude Code's ✳) whose taller line metrics
 	// would otherwise push the text off-centre.
@@ -203,7 +191,6 @@ func (t *guiTab) buildRow() {
 	t.row = gtk.NewBox(gtk.OrientationHorizontal, 6)
 	t.row.AddCSSClass("bunker-tab")
 	t.row.Append(t.short)
-	t.row.Append(t.activity)
 	t.row.Append(t.title)
 	t.row.Append(t.entry)
 	t.row.Append(closeBtn)
@@ -240,9 +227,15 @@ func (t *guiTab) installActions() {
 		a.ConnectActivate(func(*glib.Variant) { fn() })
 		group.AddAction(a)
 	}
-	// Renaming waits for the menu to close: closing hands focus back to
-	// the terminal, which would immediately end an edit started earlier.
-	add("rename", func() { t.pendingRename = true })
+	// GTK hides the menu before running the action, and hiding hands focus
+	// back to the terminal; starting the edit right away would lose focus
+	// at once and end it. Start it just after that settles instead.
+	add("rename", func() {
+		coreglib.TimeoutAdd(guiMenuSettleMs, func() bool {
+			t.startRename()
+			return false
+		})
+	})
 	add("reset-name", func() {
 		t.customTitle = ""
 		t.lastSeen = ""
@@ -280,12 +273,6 @@ func (t *guiTab) showMenu(x, y float64) {
 		t.menu = gtk.NewPopoverMenuFromModel(menu)
 		t.menu.SetParent(t.row)
 		t.menu.SetHasArrow(false)
-		t.menu.ConnectClosed(func() {
-			if t.pendingRename {
-				t.pendingRename = false
-				coreglib.IdleAdd(t.startRename)
-			}
-		})
 	} else {
 		t.menu.SetMenuModel(menu)
 	}
@@ -320,17 +307,6 @@ func (t *guiTab) refreshTitle() {
 	}
 }
 
-// setActivity marks background output: a dot when expanded, an accent
-// colour on the short label when collapsed.
-func (t *guiTab) setActivity(on bool) {
-	if on {
-		t.row.AddCSSClass("has-activity")
-	} else {
-		t.row.RemoveCSSClass("has-activity")
-	}
-	t.activity.SetVisible(on && !t.gw.isCollapsed())
-}
-
 // shortLabel is the collapsed-sidebar label: the first character of a
 // custom name, else the tab's position.
 func (t *guiTab) shortLabel() string {
@@ -348,7 +324,6 @@ func (t *guiTab) applyRowMode() {
 	t.title.SetVisible(!collapsed && !t.editing)
 	t.entry.SetVisible(!collapsed && t.editing)
 	t.closeBtn.SetVisible(!collapsed)
-	t.activity.SetVisible(!collapsed && t.row.HasCSSClass("has-activity"))
 	if collapsed {
 		t.row.AddCSSClass("collapsed")
 	} else {
@@ -429,7 +404,6 @@ func (gw *guiWin) selectTab(t *guiTab) {
 	gw.active = t
 	L.Debug("gui: select tab", "index", slices.Index(gw.tabs, t))
 	t.row.AddCSSClass("active")
-	t.setActivity(false)
 	gw.stack.SetVisibleChild(t.view)
 	t.view.GrabFocus()
 	t.lastSeen = "" // force the window title to follow
@@ -641,7 +615,7 @@ func themeCSS(rt resolvedTheme) string {
 		r, g, b := c.RGB()
 		return [3]int32{r, g, b}
 	}
-	bg, fg, accent := rgb(rt.bg), rgb(rt.fg), rgb(rt.palette[4])
+	bg, fg := rgb(rt.bg), rgb(rt.fg)
 	// mix blends a towards b by t and formats the result as #rrggbb.
 	mix := func(a, b [3]int32, t float64) string {
 		var c [3]int32
@@ -660,7 +634,6 @@ func themeCSS(rt resolvedTheme) string {
 		"@text", mix(fg, bg, 0.08),
 		"@muted", mix(fg, bg, 0.30),
 		"@dim", mix(fg, bg, 0.45),
-		"@accent", mix(accent, fg, 0.1),
 	).Replace(`
 window.bunker-window { background-color: @bg; }
 window.bunker-window headerbar {
@@ -687,10 +660,8 @@ window.bunker-window headerbar windowcontrols button:hover > image { background-
 .bunker-tab.active { background-color: @selected; color: @fg; }
 .bunker-tab .bunker-tab-close { min-width: 22px; min-height: 22px; padding: 0; opacity: 0; }
 .bunker-tab:hover .bunker-tab-close, .bunker-tab.active .bunker-tab-close { opacity: 0.75; }
-.bunker-tab-activity { color: @accent; font-size: 9px; }
 .bunker-tab.collapsed { padding: 5px 0; }
 .bunker-tab-short { font-weight: bold; }
-.bunker-tab.has-activity .bunker-tab-short { color: @accent; }
 .bunker-tab-list.collapsed { padding: 6px 4px; }
 .bunker-tab entry.bunker-tab-entry { min-height: 24px; padding: 0 6px; background-color: @bg; color: @fg; }
 `)

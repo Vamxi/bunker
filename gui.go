@@ -175,10 +175,23 @@ func (gw *guiWin) build(command []string) {
 			gw.settings.stack.SetVisibleChildName(page)
 		}
 	}
-	if os.Getenv("BUNKER_OPEN") == "tab-menu" {
+	switch os.Getenv("BUNKER_OPEN") {
+	case "tab-menu":
 		coreglib.TimeoutAdd(800, func() bool {
 			if gw.active != nil {
 				gw.active.showMenu(40, 12)
+			}
+			return false
+		})
+	case "tab-rename": // choose Rename… the way a click does: hide, then activate
+		coreglib.TimeoutAdd(800, func() bool {
+			if t := gw.active; t != nil {
+				t.showMenu(40, 12)
+				coreglib.TimeoutAdd(200, func() bool {
+					t.menu.Popdown()
+					t.row.ActivateAction("tab.rename", nil)
+					return false
+				})
 			}
 			return false
 		})

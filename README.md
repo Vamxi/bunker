@@ -29,7 +29,7 @@ Early. What works today:
 - Mouse selection, double-click word, wheel scrollback, mouse reporting to apps
 - Clipboard, bracketed paste, font zoom, scrollback
 - Tabs as a sidebar (left/right) or a bar (top/bottom), coloured from the
-  terminal theme, with titles from the running program and activity dots
+  terminal theme, with titles from the running program
 - Preferences window (Ctrl+,) that edits the config file in place; edits from
   any editor apply live
 
