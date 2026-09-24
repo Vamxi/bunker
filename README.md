@@ -49,6 +49,7 @@ grm install Vamxi/bunker
 |---|---|
 | `Ctrl+Shift+T` / `Ctrl+Shift+W` | New tab (in the current directory) / close tab |
 | `Ctrl+PgUp` / `Ctrl+PgDn` | Previous / next tab (middle-click a tab to close it) |
+| Right-click a tab | Rename, reset name, close, close other tabs |
 | Sidebar button (header bar) | Collapse the tab sidebar to one character per tab (number, or the first letter of a custom name); `[tabs] collapsed` sets the default |
 | `Ctrl+,` | Preferences |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste (`Shift+Insert` also pastes) |

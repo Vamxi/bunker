@@ -175,11 +175,22 @@ func (gw *guiWin) build(command []string) {
 			gw.settings.stack.SetVisibleChildName(page)
 		}
 	}
-	guiScheduleScreenshot(win, func() *gtk.Window {
+	if os.Getenv("BUNKER_OPEN") == "tab-menu" {
+		coreglib.TimeoutAdd(800, func() bool {
+			if gw.active != nil {
+				gw.active.showMenu(40, 12)
+			}
+			return false
+		})
+	}
+	guiScheduleScreenshot(win, func() gtk.Widgetter {
 		if gw.settings != nil && gw.settings.win.IsVisible() {
 			return gw.settings.win
 		}
-		return &win.Window
+		if gw.active != nil && gw.active.menu != nil && gw.active.menu.IsVisible() {
+			return gw.active.menu
+		}
+		return win
 	})
 	gw.watchConfig()
 	gw.pollTitles()

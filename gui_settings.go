@@ -271,6 +271,7 @@ func (s *settingsWindow) buildTabs(p *settingsPage) {
 		{"Previous / next tab", "Ctrl+PgUp / Ctrl+PgDn"},
 		{"Rename tab", "Double-click (expanded sidebar or bar)"},
 		{"Close tab with the mouse", "Middle-click"},
+		{"Tab menu (rename, reset name, close others)", "Right-click"},
 	} {
 		key := gtk.NewLabel(sc[1])
 		key.AddCSSClass("bunker-dim")

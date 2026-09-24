@@ -3,6 +3,9 @@
 // BUNKER_TABS (one command per line) opens one extra tab per command (run with
 // sh -c), for screenshots of the tab strip.
 //
+// BUNKER_OPEN=tab-menu opens the active tab's right-click menu and a
+// screenshot captures the menu.
+//
 // BUNKER_OPEN=preferences[/page] opens the Preferences window (optionally on
 // a page: appearance, tabs, terminal, advanced) at startup, and a
 // screenshot then captures it instead of the terminal.
@@ -60,7 +63,7 @@ import (
 
 // guiScheduleScreenshot captures target() (the main window unless a debug
 // hook opened another) and then closes main.
-func guiScheduleScreenshot(main *gtk.ApplicationWindow, target func() *gtk.Window) {
+func guiScheduleScreenshot(main *gtk.ApplicationWindow, target func() gtk.Widgetter) {
 	path := os.Getenv("BUNKER_SCREENSHOT")
 	if path == "" {
 		return
@@ -74,7 +77,7 @@ func guiScheduleScreenshot(main *gtk.ApplicationWindow, target func() *gtk.Windo
 	// attempt returns true to be retried: step 1 means GTK has no frame for
 	// the window yet.
 	attempt := func() bool {
-		win := target()
+		win := gtk.BaseWidget(target())
 		code := C.bunker_screenshot(C.uintptr_t(coreglib.InternObject(win).Native()), cpath)
 		if code == 1 && attempts < 20 {
 			attempts++

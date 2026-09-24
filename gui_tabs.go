@@ -15,6 +15,8 @@ import (
 
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gio/v2"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/diamondburned/gotk4/pkg/pango"
 )
@@ -41,6 +43,10 @@ type guiTab struct {
 	customTitle string // set by renaming; "" = follow the program's title
 	editing     bool
 	renameFrom  string // entry text when editing started
+	recollapse  bool   // rename expanded a collapsed sidebar; collapse after
+
+	menu          *gtk.PopoverMenu // right-click menu, created on first use
+	pendingRename bool             // "Rename…" chosen; start once the menu closes
 }
 
 // newTabApp builds the pane model for one tab from the current config.
@@ -204,7 +210,7 @@ func (t *guiTab) buildRow() {
 
 	click := gtk.NewGestureClick()
 	click.SetButton(0)
-	click.ConnectPressed(func(n int, _, _ float64) {
+	click.ConnectPressed(func(n int, x, y float64) {
 		if t.editing {
 			return
 		}
@@ -218,9 +224,74 @@ func (t *guiTab) buildRow() {
 			}
 		case 2:
 			t.gw.closeTab(t)
+		case 3:
+			t.showMenu(x, y)
 		}
 	})
 	t.row.AddController(click)
+	t.installActions()
+}
+
+// installActions gives the row a "tab" action group for its menu.
+func (t *guiTab) installActions() {
+	group := gio.NewSimpleActionGroup()
+	add := func(name string, fn func()) {
+		a := gio.NewSimpleAction(name, nil)
+		a.ConnectActivate(func(*glib.Variant) { fn() })
+		group.AddAction(a)
+	}
+	// Renaming waits for the menu to close: closing hands focus back to
+	// the terminal, which would immediately end an edit started earlier.
+	add("rename", func() { t.pendingRename = true })
+	add("reset-name", func() {
+		t.customTitle = ""
+		t.lastSeen = ""
+		t.refreshTitle()
+		t.applyRowMode()
+	})
+	add("close", func() { t.gw.closeTab(t) })
+	add("close-others", func() {
+		for _, other := range slices.Clone(t.gw.tabs) {
+			if other != t {
+				t.gw.closeTab(other)
+			}
+		}
+	})
+	t.row.InsertActionGroup("tab", group)
+}
+
+// showMenu opens the right-click menu at (x, y) in row coordinates.
+func (t *guiTab) showMenu(x, y float64) {
+	names := gio.NewMenu()
+	names.Append("Rename…", "tab.rename")
+	if t.customTitle != "" {
+		names.Append("Reset Name", "tab.reset-name")
+	}
+	closing := gio.NewMenu()
+	closing.Append("Close Tab", "tab.close")
+	if len(t.gw.tabs) > 1 {
+		closing.Append("Close Other Tabs", "tab.close-others")
+	}
+	menu := gio.NewMenu()
+	menu.AppendSection("", names)
+	menu.AppendSection("", closing)
+
+	if t.menu == nil {
+		t.menu = gtk.NewPopoverMenuFromModel(menu)
+		t.menu.SetParent(t.row)
+		t.menu.SetHasArrow(false)
+		t.menu.ConnectClosed(func() {
+			if t.pendingRename {
+				t.pendingRename = false
+				coreglib.IdleAdd(t.startRename)
+			}
+		})
+	} else {
+		t.menu.SetMenuModel(menu)
+	}
+	rect := gdk.NewRectangle(int(x), int(y), 1, 1)
+	t.menu.SetPointingTo(&rect)
+	t.menu.Popup()
 }
 
 // refreshTitle updates the row (and the window, for the active tab).
@@ -290,6 +361,10 @@ func (t *guiTab) startRename() {
 	if t.editing || t.closed {
 		return
 	}
+	if t.gw.isCollapsed() {
+		t.gw.setCollapsed(false) // the entry needs the full width
+		t.recollapse = true
+	}
 	t.editing = true
 	t.renameFrom = t.title.Text()
 	t.entry.SetText(t.renameFrom)
@@ -313,6 +388,10 @@ func (t *guiTab) finishRename(commit bool) {
 	t.title.SetVisible(true)
 	t.lastSeen = ""
 	t.refreshTitle()
+	if t.recollapse {
+		t.recollapse = false
+		t.gw.setCollapsed(true)
+	}
 	t.applyRowMode() // the short label follows a new name
 	if t == t.gw.active {
 		t.view.GrabFocus()
