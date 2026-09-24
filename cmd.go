@@ -38,6 +38,7 @@ func bunkLogo() string {
 }
 
 func init() {
+	rootCmd.AddCommand(tuiCmd)
 	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path (default: ~/.config/bunk/config.toml)")
 	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: terminal, default, solarized-dark, dracula, nord")
 	rootCmd.PersistentFlags().BoolVarP(&flagDebug, "debug", "d", false, "enable debug-level logging")
@@ -61,9 +62,19 @@ func init() {
 }
 
 var rootCmd = &cobra.Command{
-	Use:          "bunk",
+	Use:          "bunker [-- command [args...]]",
 	Version:      Version,
-	Short:        "A lightweight terminal multiplexer",
+	Short:        "A light, fast GTK4 terminal",
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runGUI(flagConfig, flagTheme, flagDebug, flagTrace, args)
+	},
+}
+
+// tuiCmd keeps bunk's terminal multiplexer available inside a terminal.
+var tuiCmd = &cobra.Command{
+	Use:          "tui",
+	Short:        "Run the bunk terminal multiplexer in the current terminal",
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return run(flagConfig, flagTheme, flagDebug, flagTrace)
@@ -133,16 +144,17 @@ func run(configPath, themeName string, debug, trace bool) error {
 	screen.Clear()
 
 	app := &App{
-		screen:        screen,
-		theme:         cfg.Theme,
-		hostOSCColors: hostColors,
-		cellAspect:    cellAspect,
-		keys:          cfg.Keybindings,
-		scrollback:    cfg.Scrollback,
-		redraw:        make(chan struct{}, 1),
-		paneDead:      make(chan *Pane, 8),
-		done:          make(chan struct{}),
-		oscBuf:        newOSCBuffer(),
+		screen:          screen,
+		theme:           cfg.Theme,
+		hostOSCColors:   hostColors,
+		cellAspect:      cellAspect,
+		keys:            cfg.Keybindings,
+		scrollback:      cfg.Scrollback,
+		scrollbackBytes: cfg.ScrollbackBytes,
+		redraw:          make(chan struct{}, 1),
+		paneDead:        make(chan *Pane, 8),
+		done:            make(chan struct{}),
+		oscBuf:          newOSCBuffer(),
 	}
 
 	screen.EnableMouse(tcell.MouseMotionEvents)
@@ -156,7 +168,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 	L.Debug("startup: screen size", "w", w, "h", h)
 
 	p, err := NewPane(
-		app.nextID, 0, 0, w, h, app.scrollback, "", nil,
+		app.nextID, 0, 0, w, h, app.scrollback, app.scrollbackBytes, "", nil,
 		app.paneOSCColors(),
 		app.redraw, app.paneDead, app.done, app.oscBuf,
 		app.cellAspect,

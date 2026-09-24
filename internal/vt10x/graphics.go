@@ -1,7 +1,7 @@
 package vt10x
 
 import (
-	"bunk/internal/graphics"
+	"bunker/internal/graphics"
 	"context"
 	"image"
 	"image/color"
@@ -78,10 +78,12 @@ func (t *State) paintGraphics(p *graphics.Placement) {
 			t.eraseWideAt(x, y)
 			// Composite over previous image samples without retaining a chain
 			// of old images. Remaining alpha is blended against the theme later.
-			if old.Image != nil {
-				top, bottom = over(top, old.Image.Top), over(bottom, old.Image.Bottom)
+			if old.Image() != nil {
+				top, bottom = over(top, old.Image().Top), over(bottom, old.Image().Bottom)
 			}
-			t.lines[y][x] = Glyph{Char: '▀', Width: 1, FG: DefaultFG, BG: old.BG, UL: DefaultUL, Image: &ImageCell{Top: top, Bottom: bottom, Placement: identity}}
+			g := Glyph{Char: '▀', Width: 1, FG: DefaultFG, BG: old.BG, UL: DefaultUL}
+			g.SetImage(&ImageCell{Top: top, Bottom: bottom, Placement: identity})
+			t.lines[y][x] = g
 			t.markDirty(y)
 		}
 		if p.Move && row+1 < p.Rows {
@@ -116,10 +118,10 @@ func (t *State) deleteGraphics(d *graphics.Deletion) {
 	selected := make(map[*ImagePlacement]bool)
 	for y, row := range t.lines {
 		for x, g := range row {
-			if g.Image == nil || g.Image.Placement.ID == 0 {
+			if g.Image() == nil || g.Image().Placement.ID == 0 {
 				continue
 			}
-			p := g.Image.Placement
+			p := g.Image().Placement
 			match := false
 			switch d.Kind {
 			case 'a':
@@ -144,7 +146,7 @@ func (t *State) deleteGraphics(d *graphics.Deletion) {
 	}
 	for y, row := range t.lines {
 		for x, g := range row {
-			if g.Image != nil && selected[g.Image.Placement] {
+			if g.Image() != nil && selected[g.Image().Placement] {
 				t.eraseCell(x, y)
 				t.markDirty(y)
 				t.changed |= ChangedScreen

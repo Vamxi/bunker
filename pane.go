@@ -23,8 +23,9 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
-	"bunk/internal/vt10x"
+	"bunker/internal/vt10x"
 
 	"github.com/creack/pty"
 	"github.com/gdamore/tcell/v2"
@@ -34,7 +35,7 @@ import (
 // retained per pane.  Overridden by the "scrollback" config field.
 // Memory cost per pane:
 //   - rawBuf:  scrollbackLines × ~200 bytes/line (raw ANSI, varies by content)
-//   - sbRing:  scrollbackLines × cols × ~24 bytes (rendered glyphs, on demand)
+//   - sbRing:  scrollbackLines × cols × 32 bytes (rendered glyphs, on demand)
 const defaultScrollbackLines = 10_000
 
 // selPos identifies a cell in the pane's unified virtual coordinate space.
@@ -71,6 +72,7 @@ type Pane struct {
 	sb              sbRing // ring buffer of captured rows
 	sbOff           int    // 0 = live view; N = N lines above live view
 	scrollbackLines int    // max scrollback rows (from config)
+	scrollbackBytes int    // optional memory cap (from config); 0 = none
 
 	// Text selection state.  Protected by mu.
 	// selAnchor is where Button1 was pressed; selCursor tracks the drag endpoint.
@@ -192,7 +194,7 @@ type Pane struct {
 //	done      - closed by the app on shutdown
 //	colors    - default OSC 10/11/12 colours for the pane (from theme or host probe)
 //	oscBuf    - receives OSC 7/8/52/133 sequences to forward to the host terminal
-func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, colors hostOSCColors, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscBuf *oscBuffer, cellAspect ...float64) (*Pane, error) {
+func NewPane(id, x, y, w, h, scrollback, scrollbackBytes int, dir string, spawnArgs []string, colors hostOSCColors, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscBuf *oscBuffer, cellAspect ...float64) (*Pane, error) {
 	if w < 2 || h < 1 {
 		return nil, fmt.Errorf("pane too small: %dx%d", w, h)
 	}
@@ -245,12 +247,13 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, col
 		ptmx:             ptmx,
 		cmd:              cmd,
 		scrollbackLines:  scrollback,
-		sb:               sbRing{maxLines: scrollback},
+		scrollbackBytes:  scrollbackBytes,
 		themeFGColor:     colors.fg,
 		themeBGColor:     colors.bg,
 		themeCursorColor: colors.cursor,
 	}
-	p.term = vt10x.New(vt10x.WithSize(w-1, h), vt10x.WithScrollCallback(p.onScrollRow),
+	p.sb = sbRing{maxLines: p.sbCapacity(w - 1)}
+	p.term = vt10x.New(vt10x.WithSize(w-1, h), vt10x.WithScrollSwapCallback(p.onScrollSwap),
 		vt10x.WithScrollbackClearCallback(p.onScrollbackClear), vt10x.WithGraphicsReply(p.writeInput), vt10x.WithCellPixels(cellWidth, cellHeight))
 
 	// One-time container detection: read the shell process's own environ.
@@ -346,7 +349,9 @@ func (p *Pane) readPTY(redraw chan struct{}, oscBuf *oscBuffer) {
 				continue
 			}
 
-			L.Log(context.Background(), LevelTrace, "readPTY: chunk", "pane", p.id, "data", fmt.Sprintf("%q", chunk))
+			if L.Enabled(context.Background(), LevelTrace) {
+				L.Log(context.Background(), LevelTrace, "readPTY: chunk", "pane", p.id, "data", fmt.Sprintf("%q", chunk))
+			}
 
 			// Step 1 - OSC passthrough (CWD, clipboard, prompt markers).
 			p.oscScan.Scan(chunk, func(seq []byte) {
@@ -498,6 +503,36 @@ func (p *Pane) onScrollRow(row []vt10x.Glyph) {
 	oldSbOff := p.sbOff
 	p.sb.push(row)
 	p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
+}
+
+// glyphBytes is the in-memory size of one scrollback cell.
+const glyphBytes = int(unsafe.Sizeof(vt10x.Glyph{}))
+
+// sbCapacity is the scrollback ring size for a grid cols wide: the line
+// limit, lowered to fit the byte limit when one is configured. It keeps at
+// least one screenful's worth (100 rows) so a tiny cap never disables history.
+func (p *Pane) sbCapacity(cols int) int {
+	lines := p.scrollbackLines
+	if p.scrollbackBytes > 0 && cols > 0 {
+		lines = min(lines, max(100, p.scrollbackBytes/(cols*glyphBytes)))
+	}
+	return lines
+}
+
+// onScrollSwap is onScrollRow without the row copy: the ring keeps the
+// departing row and hands vt10x back the slot it evicted. Installed in
+// NewPane; scroll-heavy output spent most of its time copying rows.
+func (p *Pane) onScrollSwap(row []vt10x.Glyph) []vt10x.Glyph {
+	if p.term.Mode()&vt10x.ModeAltScreen != 0 {
+		return nil
+	}
+	oldCount := p.sb.count
+	oldSbOff := p.sbOff
+	repl := p.sb.swapIn(row)
+	if repl != nil {
+		p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
+	}
+	return repl
 }
 
 // onScrollbackClear is the vt10x scrollback-erase callback installed in
@@ -1189,7 +1224,7 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 
 	oldSbOff := p.sbOff
 	oldSbCount := p.sb.count
-	p.sb = sbRing{maxLines: p.scrollbackLines}
+	p.sb = sbRing{maxLines: p.sbCapacity(newCols)}
 	for r := 0; r < firstVisible; r++ {
 		row := captureRow(scratch, r, newCols)
 		for c := range row {
@@ -1274,7 +1309,7 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 
 		// Shrink scrollback by the pulled amount.
 		if pull > 0 {
-			newSB := sbRing{maxLines: p.scrollbackLines}
+			newSB := sbRing{maxLines: p.sbCapacity(cols)}
 			for i := 0; i < p.sb.count-pull; i++ {
 				newSB.push(p.sb.get(i))
 			}
@@ -1585,7 +1620,7 @@ func (p *Pane) selText() string {
 			}
 			line.WriteRune(ch)
 			if cells != nil && c < len(cells) {
-				line.WriteString(cells[c].Combining)
+				line.WriteString(cells[c].Combining())
 			}
 		}
 		// Only trim trailing spaces on hard-break rows; soft-wrapped rows

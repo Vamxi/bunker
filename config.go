@@ -27,13 +27,14 @@ import (
 // ---------------------------------------------------------------------------
 
 type fileConfig struct {
-	Theme      string            `toml:"theme"`
-	LogFile    string            `toml:"log_file"`
-	LogLevel   string            `toml:"log_level"`
-	CellAspect float64           `toml:"cell_aspect"` // cell pixel H/W ratio; 0 = auto-detect
-	Scrollback int               `toml:"scrollback"`  // max scrollback lines per pane; 0 = default
-	UI         uiOverride        `toml:"ui"`
-	Keys       map[string]string `toml:"keys"` // action → key string, e.g. "split" → "f1"
+	Theme        string            `toml:"theme"`
+	LogFile      string            `toml:"log_file"`
+	LogLevel     string            `toml:"log_level"`
+	CellAspect   float64           `toml:"cell_aspect"`   // cell pixel H/W ratio; 0 = auto-detect
+	Scrollback   int               `toml:"scrollback"`    // max scrollback lines per pane; 0 = default
+	ScrollbackMB float64           `toml:"scrollback_mb"` // optional per-pane memory cap; 0 = lines only
+	UI           uiOverride        `toml:"ui"`
+	Keys         map[string]string `toml:"keys"` // action → key string, e.g. "split" → "f1"
 }
 
 type uiOverride struct {
@@ -323,12 +324,15 @@ type resolvedTheme struct {
 
 // Config is the fully resolved application configuration.
 type Config struct {
-	Theme       resolvedTheme
-	LogFile     string
-	LogLevel    string
-	CellAspect  float64 // 0 = auto-detect via TIOCGWINSZ
-	Scrollback  int     // max scrollback lines per pane
-	Keybindings Keybindings
+	Theme      resolvedTheme
+	LogFile    string
+	LogLevel   string
+	CellAspect float64 // 0 = auto-detect via TIOCGWINSZ
+	Scrollback int     // max scrollback lines per pane
+	// ScrollbackBytes caps scrollback memory per pane (0 = no byte cap).
+	// The smaller of the two limits applies; see Pane.sbCapacity.
+	ScrollbackBytes int
+	Keybindings     Keybindings
 }
 
 // ---------------------------------------------------------------------------
@@ -470,12 +474,13 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 	}
 
 	return Config{
-		Theme:       resolveTheme(def),
-		LogFile:     fc.LogFile,
-		LogLevel:    fc.LogLevel,
-		CellAspect:  fc.CellAspect,
-		Scrollback:  scrollback,
-		Keybindings: resolveKeybindings(fc.Keys),
+		Theme:           resolveTheme(def),
+		LogFile:         fc.LogFile,
+		LogLevel:        fc.LogLevel,
+		CellAspect:      fc.CellAspect,
+		Scrollback:      scrollback,
+		ScrollbackBytes: int(max(fc.ScrollbackMB, 0) * (1 << 20)),
+		Keybindings:     resolveKeybindings(fc.Keys),
 	}, nil
 }
 
@@ -539,6 +544,12 @@ log_level = "info"  # trace | debug | info | warn | error
 # Note: scrollback stores screen rows, not logical lines — narrower panes
 # consume more rows per line of output due to wrapping.
 # scrollback = 10000
+
+# Optional memory cap per pane, in MiB.  When set, the smaller of the two
+# limits wins: a pane keeps at most scrollback_mb MiB of history, so wider
+# panes hold fewer rows.  Each cell costs 32 bytes (200 cols x 10000 rows
+# ~= 61 MiB).  Leave unset to limit by lines only.
+# scrollback_mb = 32
 
 # Optional UI color overrides - leave blank to use the theme's defaults.
 # Values must be "#RRGGBB" hex strings.

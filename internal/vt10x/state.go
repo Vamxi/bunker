@@ -1,7 +1,7 @@
 package vt10x
 
 import (
-	"bunk/internal/graphics"
+	"bunker/internal/graphics"
 	"io"
 	"log"
 	"strings"
@@ -105,15 +105,56 @@ const (
 	ChangedTitle
 )
 
+// Glyph is one display cell. Fields are ordered to pack into 32 bytes:
+// scrollback holds tens of thousands of rows of these, so size is memory
+// and scroll speed. Rare data (grapheme suffix, image samples) lives behind
+// ext; use Combining/Image and SetCombining/SetImage.
 type Glyph struct {
-	Char      rune
-	Combining string // immutable suffix of the grapheme, shared safely by snapshots
-	Width     int8   // 2: wide, -1: continuation, -2: wrap padding, 0/1: narrow
-	Mode      int16
-	FG, BG    Color
-	UL        Color      // SGR 58 underline color; DefaultUL means inherit from FG
-	Link      uint16     // OSC 8 hyperlink ID; 0 = no link, otherwise index into State.links (1-based)
-	Image     *ImageCell // immutable cell-local raster data, shared by scrollback snapshots
+	Char   rune
+	FG, BG Color
+	UL     Color // SGR 58 underline color; DefaultUL means inherit from FG
+	Mode   int16
+	Link   uint16    // OSC 8 hyperlink ID; 0 = no link, otherwise index into State.links (1-based)
+	Width  int8      // 2: wide, -1: continuation, -2: wrap padding, 0/1: narrow
+	ext    *glyphExt // nil for plain cells
+}
+
+// glyphExt holds per-cell data most cells never have. It is immutable once
+// attached, so glyph copies (scrollback, snapshots, reflow) share it safely;
+// setters replace the pointer instead of writing through it.
+type glyphExt struct {
+	combining string     // grapheme suffix after Char (combining marks, ZWJ sequences)
+	image     *ImageCell // cell-local raster samples
+}
+
+// Combining returns the grapheme suffix stored after Char.
+func (g Glyph) Combining() string {
+	if g.ext == nil {
+		return ""
+	}
+	return g.ext.combining
+}
+
+// Image returns the cell's raster samples, or nil for a text cell.
+func (g Glyph) Image() *ImageCell {
+	if g.ext == nil {
+		return nil
+	}
+	return g.ext.image
+}
+
+// SetCombining replaces the grapheme suffix.
+func (g *Glyph) SetCombining(s string) { g.setExt(s, g.Image()) }
+
+// SetImage replaces the raster samples.
+func (g *Glyph) SetImage(img *ImageCell) { g.setExt(g.Combining(), img) }
+
+func (g *Glyph) setExt(combining string, img *ImageCell) {
+	if combining == "" && img == nil {
+		g.ext = nil
+		return
+	}
+	g.ext = &glyphExt{combining: combining, image: img}
 }
 
 type line []Glyph
@@ -156,6 +197,8 @@ type State struct {
 	mode               ModeFlag
 	state              parseState
 	clusterOpen        bool
+	asciiReady         bool // last put printed plain ASCII in ground state; see printASCIIRun
+	noASCIIFastPath    bool // tests: force every byte through parse
 	clusterX, clusterY int
 	str                strEscape
 	csi                csiEscape
@@ -190,6 +233,9 @@ type State struct {
 	// the row's backing storage is cleared, so the content is still intact.
 	// The caller must copy any data it wants to retain after the call.
 	scrollRowCb func(row []Glyph)
+	// scrollSwapCb, if non-nil, takes ownership of each departing row and
+	// returns a same-length replacement buffer (see WithScrollSwapCallback).
+	scrollSwapCb func(row []Glyph) []Glyph
 	// sbClearCb, if non-nil, is called when the application requests
 	// scrollback erasure via ED 3 (CSI 3 J) or RIS (ESC c).  Scrollback
 	// lives outside this State (which only holds the visible grid), so
@@ -212,6 +258,15 @@ func newState(w io.Writer) *State {
 func (t *State) logf(format string, args ...interface{}) {
 	if t.DebugLogger != nil {
 		t.DebugLogger.Printf(format, args...)
+	}
+}
+
+// logRune logs one parsed rune. It checks the logger before formatting:
+// the parser calls it per byte, so boxing string(c) unconditionally cost
+// an allocation for every character of output.
+func (t *State) logRune(c rune) {
+	if t.DebugLogger != nil {
+		t.DebugLogger.Printf("%q", string(c))
 	}
 }
 
@@ -574,7 +629,7 @@ func (t *State) setChar(c rune, attr *Glyph, x, y int) {
 	}
 	t.lines[y][x] = *attr
 	t.lines[y][x].Char = c
-	t.lines[y][x].Combining = ""
+	t.lines[y][x].ext = nil
 	t.lines[y][x].Width = int8(width)
 	//if t.options.BrightBold && attr.Mode&attrBold != 0 && attr.FG < 8 {
 	if attr.Mode&attrBold != 0 && attr.FG < 8 {
@@ -599,11 +654,7 @@ func runeCellWidth(c rune) int {
 }
 
 func (t *State) eraseCell(x, y int) {
-	g := t.cur.Attr
-	g.Char, g.Width, g.Link = ' ', 1, 0
-	g.Mode, g.Combining, g.UL = 0, "", DefaultUL
-	g.Image = nil
-	t.lines[y][x] = g
+	t.lines[y][x] = t.blankCell()
 }
 
 func (t *State) eraseWideAt(x, y int) {
@@ -744,9 +795,27 @@ func (t *State) clear(x0, y0, x1, y1 int) {
 		if t.lines[y][end].Width == 2 && end+1 < t.cols {
 			end++
 		}
-		for x := start; x <= end; x++ {
-			t.eraseCell(x, y)
-		}
+		fillBlank(t.lines[y][start:end+1], t.blankCell())
+	}
+}
+
+// blankCell is the glyph an erase writes: a space in the current colours.
+func (t *State) blankCell() Glyph {
+	g := t.cur.Attr
+	g.Char, g.Width, g.Link = ' ', 1, 0
+	g.Mode, g.UL, g.ext = 0, DefaultUL, nil
+	return g
+}
+
+// fillBlank sets every cell to g using doubling copies (memmove) instead of
+// per-cell struct stores; clearing dominates scroll-heavy output.
+func fillBlank(cells []Glyph, g Glyph) {
+	if len(cells) == 0 {
+		return
+	}
+	cells[0] = g
+	for n := 1; n < len(cells); n *= 2 {
+		copy(cells[n:], cells[:n])
 	}
 }
 
@@ -832,13 +901,36 @@ func (t *State) scrollDown(orig, n int) {
 	n = clamp(n, 0, t.bottom-orig+1)
 	t.clear(0, t.bottom-n+1, t.cols-1, t.bottom)
 	t.changed |= ChangedScreen
-	for i := t.bottom; i >= orig+n; i-- {
-		t.lines[i], t.lines[i-n] = t.lines[i-n], t.lines[i]
-		t.markDirty(i)
-		t.markDirty(i - n)
-	}
+	t.rotateLines(orig, t.bottom, -n)
 
 	// TODO: selection scroll
+}
+
+// rotateLines rotates rows [top, bottom] by n: n > 0 moves every row up n
+// places (the top n wrap to the bottom), n < 0 moves them down. Row slices
+// move as headers in one memmove instead of pairwise swaps, and every row
+// in the region is marked dirty once.
+func (t *State) rotateLines(top, bottom, n int) {
+	region := t.lines[top : bottom+1]
+	size := len(region)
+	if n < 0 {
+		n += size
+	}
+	if size == 0 || n <= 0 || n >= size {
+		return
+	}
+	var small [4]line
+	moved := small[:0]
+	if n > len(small) {
+		moved = make([]line, 0, n)
+	}
+	moved = append(moved, region[:n]...)
+	copy(region, region[n:])
+	copy(region[size-n:], moved)
+	for y := top; y <= bottom; y++ {
+		t.dirty[y] = true
+	}
+	t.anydirty = true
 }
 
 func (t *State) scrollUp(orig, n int) {
@@ -846,18 +938,23 @@ func (t *State) scrollUp(orig, n int) {
 	// Fire the scroll callback before clearing the departing rows.
 	// The callback receives each row while its content is still intact.
 	// Only fire when orig == 0 — rows leaving the top of the visible screen.
-	if t.scrollRowCb != nil && orig == 0 {
-		for i := 0; i < n; i++ {
-			t.scrollRowCb([]Glyph(t.lines[i]))
+	if orig == 0 {
+		switch {
+		case t.scrollSwapCb != nil:
+			for i := 0; i < n; i++ {
+				if repl := t.scrollSwapCb([]Glyph(t.lines[i])); len(repl) == t.cols {
+					t.lines[i] = repl // cleared below
+				}
+			}
+		case t.scrollRowCb != nil:
+			for i := 0; i < n; i++ {
+				t.scrollRowCb([]Glyph(t.lines[i]))
+			}
 		}
 	}
 	t.clear(0, orig, t.cols-1, orig+n-1)
 	t.changed |= ChangedScreen
-	for i := orig; i <= t.bottom-n; i++ {
-		t.lines[i], t.lines[i+n] = t.lines[i+n], t.lines[i]
-		t.markDirty(i)
-		t.markDirty(i + n)
-	}
+	t.rotateLines(orig, t.bottom, n)
 
 	// TODO: selection scroll
 }
@@ -1275,7 +1372,7 @@ func (t *State) String() string {
 				continue
 			}
 			view = append(view, attr.Char)
-			view = append(view, []rune(attr.Combining)...)
+			view = append(view, []rune(attr.Combining())...)
 		}
 		view = append(view, '\n')
 	}

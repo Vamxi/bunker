@@ -1,4 +1,4 @@
-BINARY  := bunk
+BINARY  := bunker
 PWD     := $(shell pwd)
 PKG     := ./...
 VERSION := 0.0.0
@@ -30,7 +30,7 @@ fmt:
 	  echo "  go install golang.org/x/tools/cmd/goimports@latest"; \
 	  exit 1; \
 	}
-	goimports -w .
+	goimports -w $$(find . -name '*.go' -not -path './third_party/*')
 
 lint: vet
 	@command -v golangci-lint >/dev/null 2>&1 || { \
@@ -49,36 +49,27 @@ standards:
 	curl -sL https://raw.githubusercontent.com/jsnjack/standards/master/AGENTS.go.md \
 	    -o AGENTS.go.md
 
+# bunker links GTK4 through cgo, so it builds natively for linux/amd64 only
+# (needs gtk4-devel). The first build compiles the GTK bindings (~9 min);
+# later builds are cached.
 bin/$(BINARY): bin/$(BINARY)_linux_amd64
 	cp $< $@
 	ln -sf bin/$(BINARY) $(BINARY)
 bin/$(BINARY)_linux_amd64: test version
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $@
-bin/$(BINARY)_linux_arm64: test version
-	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $@
-bin/$(BINARY)_darwin_amd64: test version
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $@
-bin/$(BINARY)_darwin_arm64: test version
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $@
+	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $@
 
-build: bin/$(BINARY) bin/$(BINARY)_linux_amd64 bin/$(BINARY)_linux_arm64 bin/$(BINARY)_darwin_amd64 bin/$(BINARY)_darwin_arm64
+build: bin/$(BINARY)
 
 release: build
-	tar -czf bin/$(BINARY)_linux_amd64.tar.gz  --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_linux_amd64
-	tar -czf bin/$(BINARY)_linux_arm64.tar.gz  --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_linux_arm64
-	tar -czf bin/$(BINARY)_darwin_amd64.tar.gz --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_darwin_amd64
-	tar -czf bin/$(BINARY)_darwin_arm64.tar.gz --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_darwin_arm64
-	grm release jsnjack/$(BINARY) \
+	tar -czf bin/$(BINARY)_linux_amd64.tar.gz --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_linux_amd64
+	grm release Vamxi/$(BINARY) \
 		-f bin/$(BINARY)_linux_amd64.tar.gz \
-		-f bin/$(BINARY)_linux_arm64.tar.gz \
-		-f bin/$(BINARY)_darwin_amd64.tar.gz \
-		-f bin/$(BINARY)_darwin_arm64.tar.gz \
 		-t "v`monova`"
 
 run: test
 	go build -o $(BINARY) .
 	> /tmp/bunk.log
-	BUNK=1 gnome-terminal -- bash -c 'cd $(PWD) && BUNK= ./$(BINARY) --trace'
+	./$(BINARY) --trace
 
 clean:
 	rm -rf bin/ $(BINARY)

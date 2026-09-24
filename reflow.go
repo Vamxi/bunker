@@ -31,7 +31,7 @@ import (
 	"bytes"
 	"strconv"
 
-	"bunk/internal/vt10x"
+	"bunker/internal/vt10x"
 )
 
 // stripAltScreen removes alt-screen content from buf, keeping pre-entry and
@@ -124,7 +124,7 @@ func rowChars(row []vt10x.Glyph) []rune {
 	for i := 0; i < end; i++ {
 		if c := row[i].Char; c != 0 { // include spaces, exclude only unset cells
 			chars = append(chars, c)
-			chars = append(chars, []rune(row[i].Combining)...)
+			chars = append(chars, []rune(row[i].Combining())...)
 		}
 	}
 	return chars
@@ -284,7 +284,7 @@ func reflowInject(term vt10x.Terminal, rows [][]vt10x.Glyph) {
 				ch = ' '
 			}
 			buf.WriteRune(ch)
-			buf.WriteString(g.Combining)
+			buf.WriteString(g.Combining())
 		}
 		if r < lastContent {
 			buf.WriteString("\x1b[0m\r\n")

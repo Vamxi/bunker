@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"bunk/internal/vt10x"
+	"bunker/internal/vt10x"
 )
 
 // ---------------------------------------------------------------------------

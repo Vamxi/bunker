@@ -1,7 +1,7 @@
 package vt10x
 
 import (
-	"bunk/internal/graphics"
+	"bunker/internal/graphics"
 	"fmt"
 	"math"
 	"regexp"

@@ -5,7 +5,7 @@ func isControlCode(c rune) bool {
 }
 
 func (t *State) parse(c rune) {
-	t.logf("%q", string(c))
+	t.logRune(c)
 	if isControlCode(c) {
 		if t.handleControlCodes(c) || t.cur.Attr.Mode&attrGfx == 0 {
 			return
@@ -50,6 +50,37 @@ func (t *State) parse(c rune) {
 		t.cur.State |= cursorWrapNext
 	}
 	t.clusterOpen = true
+	t.asciiReady = c >= 0x20 && c < 0x7f
+}
+
+// printASCIIRun prints a run of printable ASCII bytes directly, skipping the
+// per-rune decode, state dispatch, logging, and grapheme checks that parse
+// performs. It is only valid right after parse printed a plain ASCII
+// character (asciiReady): the parser is in ground state and the open
+// cluster is ASCII, so no byte in the run can extend it. It stops at the
+// first byte needing the general path (controls, non-ASCII, a pending wrap)
+// and returns how many bytes it consumed.
+func (t *State) printASCIIRun(b []byte) int {
+	if t.cur.Attr.Mode&attrGfx != 0 || t.mode&ModeInsert != 0 {
+		return 0
+	}
+	n := 0
+	for ; n < len(b); n++ {
+		c := b[n]
+		if c < 0x20 || c > 0x7e || t.cur.State&cursorWrapNext != 0 {
+			break
+		}
+		x, y := t.cur.X, t.cur.Y
+		t.setChar(rune(c), &t.cur.Attr, x, y)
+		t.clusterX, t.clusterY = x, y
+		if x+1 < t.cols {
+			t.moveTo(x+1, y)
+		} else {
+			t.cur.X = t.cols - 1
+			t.cur.State |= cursorWrapNext
+		}
+	}
+	return n
 }
 
 func (t *State) parseEsc(c rune) {
@@ -57,7 +88,7 @@ func (t *State) parseEsc(c rune) {
 		return
 	}
 	next := t.parse
-	t.logf("%q", string(c))
+	t.logRune(c)
 	switch c {
 	case '[':
 		next = t.parseEscCSI
@@ -118,7 +149,7 @@ func (t *State) parseEscCSI(c rune) {
 	if t.handleControlCodes(c) {
 		return
 	}
-	t.logf("%q", string(c))
+	t.logRune(c)
 	if t.csi.put(byte(c)) {
 		t.state = t.parse
 		t.handleCSI()
@@ -126,7 +157,7 @@ func (t *State) parseEscCSI(c rune) {
 }
 
 func (t *State) parseEscStr(c rune) {
-	t.logf("%q", string(c))
+	t.logRune(c)
 	switch c {
 	case 0x18, 0x1a:
 		t.state = t.parse
@@ -166,7 +197,7 @@ func (t *State) parseEscStrEnd(c rune) {
 	if t.handleControlCodes(c) {
 		return
 	}
-	t.logf("%q", string(c))
+	t.logRune(c)
 	t.state = t.parse
 	if c == '\\' {
 		t.handleSTR()
@@ -177,7 +208,7 @@ func (t *State) parseEscAltCharset(c rune) {
 	if t.handleControlCodes(c) {
 		return
 	}
-	t.logf("%q", string(c))
+	t.logRune(c)
 	switch c {
 	case '0': // line drawing set
 		t.cur.Attr.Mode |= attrGfx

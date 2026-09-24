@@ -1,163 +1,105 @@
-<div align="center">
+# bunker
 
-# bunk
+A light, fast GTK4 terminal for Linux. No Electron, no web view: one Go
+binary that draws through GTK's GPU renderer (Vulkan/GL).
 
-Adds split panes to any terminal. Detects your current context - container, SSH, or sudo - and can open new panes inside the same environment.
+> **Built on [bunk](https://github.com/jsnjack/bunk) by
+> [jsnjack](https://github.com/jsnjack).** bunker is a fork of bunk: the
+> PTY handling, the VT emulator, scrollback, reflow, selection, and the
+> compatibility work that keeps Claude Code, Copilot CLI, vim, and btop
+> rendering correctly all come from bunk. bunker puts a native window around
+> it.
+>
+> **If you want these features inside the terminal you already use, use
+> [bunk](https://github.com/jsnjack/bunk) instead.** It adds split panes,
+> context-aware splits, search, and scrollback to any terminal.
 
-![bunk demo](assets/bunk_demo.gif)
+## Status
 
-</div>
+Early. What works today:
 
----
+- GPU rendering through GtkSnapshot/GSK; draws only on the display's frame clock
+- Truecolor, bold/italic/dim, underline styles (single, double, curly, dotted,
+  dashed) with underline colour, strikethrough, overline
+- Wide characters, emoji sequences (ZWJ, flags, skin tones, keycaps), combining marks
+- Box drawing, block elements, and braille drawn procedurally, so TUI borders
+  are seamless at any font size
+- Keyboard through bunk's encoder: kitty keyboard protocol, application
+  cursor/keypad modes, modifiers
+- Mouse selection, double-click word, wheel scrollback, mouse reporting to apps
+- Clipboard, bracketed paste, font zoom, scrollback
 
-bunk is a terminal multiplexer written in Go. Each pane has its own PTY. It's been used daily with Copilot CLI, Claude Code, btop, vim, and other TUI apps.
+Planned layers: config and themes, tabs (vertical or horizontal), splits,
+IME input.
 
-## Features
+## Install
 
-- Split panes (F1) - direction chosen by pixel cell aspect ratio, not column count
-- Context-aware split (Alt+F1) - opens a new shell in the same container, SSH host, or sudo
-- Zoom (F12) - fullscreen toggle for the active pane; other panes stay open
-- Content reflow - text rewraps at the new column width on every split or resize
-- Per-pane scrollback (10 000 lines by default) with Shift+PgUp/PgDn, preserved through vim and other alt-screen apps
-- Incremental search (Ctrl+F) across live output and scrollback
-- Copy/paste with Ctrl+C / Ctrl+V (Ctrl+C passes through when no selection is active)
-- Mouse: click to focus, drag to select, double-click word, scroll wheel; Shift overrides app mouse mode
-- Status badges: container name, SSH host, sudo, scroll depth
-- Themes: `terminal` (inherit from host), `default`, `solarized-dark`, `dracula`, `nord`
-
-## Installation
+bunker needs GTK 4 at runtime (every GNOME desktop already has it).
 
 ```bash
-grm install jsnjack/bunk
+grm install Vamxi/bunker
 ```
 
-Or grab a binary from [Releases](https://github.com/jsnjack/bunk/releases).
-
-## Auto-launch
-
-Add to `~/.bashrc` or `~/.zshrc`:
-
-```bash
-if [[ -t 1 ]] && [[ -z "$BUNK" ]] && [[ -z "$SSH_TTY" ]] && command -v bunk &>/dev/null; then
-    exec bunk
-fi
-```
-
-`BUNK=1` is set in every pane to prevent recursion.
-
-## Key Bindings
+## Keys
 
 | Key | Action |
-|-----|--------|
-| `F1` | Split pane (taller than wide → splits top/bottom; wider than tall → splits left/right) |
-| `Alt+F1` | Split with a new shell in the same context (SSH / container / sudo) |
-| `Ctrl+F12` | Toggle keyboard passthrough for the active pane |
-| `F12` | Toggle fullscreen zoom |
-| `Alt+←↑→↓` | Navigate between panes |
-| `Shift+PgUp` / `Shift+PgDn` | Scroll history |
-| `Ctrl+F` | Search (Enter / Ctrl+N = next, Ctrl+P = prev, Esc = exit) |
-| `Ctrl+C` | Copy selection; passes `^C` through if nothing is selected |
-| `Ctrl+V` | Paste |
-| `Ctrl+Q` | Quit |
-| `Ctrl+D` / `exit` | Close active pane |
-| `Alt+R` | Re-initialise host terminal (recovery after binary corruption) |
-| Mouse drag | Select text (hold Shift to override app mouse mode) |
-| Double-click | Select word |
-| Drag to edge | Auto-scroll into history while selecting |
-
-With passthrough enabled, all keyboard shortcuts except the passthrough toggle
-reach the application, including F1, Alt+arrows, and Ctrl+Q. Mouse controls
-remain available. Each pane remembers its own mode; new panes start with it off.
-Remap the toggle with `passthrough` in `[keys]`.
-
-## Context-aware splitting (`Alt+F1`)
-
-`F1` always opens a plain host shell. `Alt+F1` opens a new shell in the same context as the current pane.
-
-Supported contexts: Podman, Docker, LXD/LXC, Incus, Toolbox, Distrobox, SSH, sudo/su.
-
-## Status badges
-
-Shown in the top-right corner of each pane:
-
-| Badge | Meaning |
 |---|---|
-| `⬡ mycontainer` | Podman / Docker / LXD / LXC / Incus container |
-| `▣ my-toolbox` | Toolbox or Distrobox container |
-| `⇄ myserver.com` | SSH session |
-| `sudo` / `su` | Elevated shell |
-| `PASS` | Keyboard passthrough enabled (`Ctrl+F12` to disable); takes priority when badges do not fit |
-| `ZOOM` | Pane is in fullscreen zoom mode (`F12`) |
-| `-42` | Scrolled back 42 lines |
-| `COPIED` | Selection copied to clipboard |
+| `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste (`Shift+Insert` also pastes) |
+| `Ctrl+Shift+=` / `Ctrl+Shift+-` / `Ctrl+Shift+0` | Font bigger / smaller / reset |
+| `Shift+PgUp` / `Shift+PgDn` | Scroll history |
+| Mouse drag / double-click | Select text / select word (Shift overrides app mouse mode) |
 
-## Configuration
+Everything else goes to the application.
+
+## Usage
 
 ```bash
-bunk config init    # writes ~/.config/bunk/config.toml
+bunker                     # your login shell in a new window
+bunker -- btop             # run a program instead of the shell
+bunker tui                 # bunk's multiplexer in the current terminal
+BUNKER_FONT="JetBrains Mono 12" bunker
 ```
 
-```toml
-# Built-in themes: terminal, default, solarized-dark, dracula, nord
-# "terminal" inherits all colours from the host terminal emulator.
-theme = "default"
+Configuration is shared with bunk for now (`~/.config/bunk/config.toml`,
+`bunker config init`). Relevant fields: `theme`, `scrollback` (lines, default
+10 000), and `scrollback_mb` (optional per-pane memory cap; the smaller limit
+wins).
 
-# Per-pane scrollback limit (default: 10 000 lines).
-# scrollback = 10000
+## Performance
 
-# Log destination - only written when --debug or --trace is passed.
-# log_file = "/tmp/bunk.log"
+Measured on one Linux laptop, `seq 1 2000000` inside the window:
 
-# Cell aspect ratio (height / width). Controls split direction.
-# Default 2.25 suits most monospace fonts.
-# cell_aspect = 2.25
+| | bunker |
+|---|---|
+| 2M lines | ~0.8 s |
+| RSS, idle, one window | ~98 MB (≈36 MB of it is the Vulkan driver) |
+| Idle CPU | ~0.4% |
 
-[keybindings]
-split         = "f1"
-split_context = "alt+f1"
-zoom          = "f12"
-quit          = "ctrl+q"
-copy          = "ctrl+c"
-paste         = "ctrl+v"
-search        = "ctrl+f"
+The emulator changes behind these numbers (compact 32-byte cells, copy-free
+scrollback, rotation-based scrolling, an ASCII fast path) live in the shared
+core and benefit `bunker tui` as well.
 
-[ui]
-# Hex colour overrides ("#RRGGBB"). Empty = use theme default.
-active_border   = ""
-inactive_border = ""
-scrollbar_thumb = ""
-scrollbar_track = ""
-```
-
-## CLI flags
-
-```
-bunk [flags]
-bunk config init [--force]
-
-Flags:
-  --config string    Config file path (default ~/.config/bunk/config.toml)
-  --theme  string    Override theme name
-  --debug            Debug logging
-  --trace            Trace logging (includes raw PTY bytes)
-```
-
-## Debugging
-
-If your shell auto-launches bunk from `.bashrc` / `.zshrc`, use this workflow:
+## Development
 
 ```bash
-# 1) Open a terminal that does NOT auto-exec bunk
-BUNK=1 gnome-terminal
-
-# 2) From that terminal, run the local binary directly
-BUNK= ./bunk
-
-# (or: BUNK= ./bunk --trace for detailed logs of all input/output)
+sudo dnf install gtk4-devel     # build dependency
+make build                      # tests (race) then bin/bunker
+make check                      # fmt, vet, test, build, lint
 ```
 
-Or use the Makefile shortcut — builds the local binary, resets `/tmp/bunk.log`, and opens a new terminal with trace logging in one step:
+The first build compiles the GTK bindings and takes several minutes; later
+builds are cached. `third_party/gotk4` carries two fixes to gotk4's subclass
+support (see `BUNKER_PATCHES.md` there); `third_party/tcell` is bunk's
+patched tcell.
 
-```bash
-make run
-```
+Debug helpers: `--debug` / `--trace` log to `/tmp/bunk.log`;
+`BUNKER_SCREENSHOT=out.png` renders the window to a PNG through GSK and
+exits; `BUNKER_CPUPROFILE=cpu.prof` writes a CPU profile.
+
+## Credits
+
+bunker exists because of [bunk](https://github.com/jsnjack/bunk) by
+[jsnjack](https://github.com/jsnjack), whose full history
+this repository keeps. The vendored VT emulator descends from
+[hinshun/vt10x](https://github.com/hinshun/vt10x); GTK bindings are
+[gotk4](https://github.com/diamondburned/gotk4).

@@ -18,7 +18,8 @@ type App struct {
 	theme  resolvedTheme // active colour theme, set at startup
 	keys   Keybindings   // resolved hotkey configuration
 
-	scrollback int // max scrollback lines per pane (from config)
+	scrollback      int // max scrollback lines per pane (from config)
+	scrollbackBytes int // optional scrollback memory cap per pane; 0 = none
 
 	// cellAspect is the pixel height-to-width ratio of a single terminal cell
 	// (cellH / cellW).  Typical fonts give ~1.8-2.2.  Used by splitActive to
@@ -628,7 +629,7 @@ func (app *App) splitActive(inheritContext bool) {
 	}
 
 	newPane, err := NewPane(
-		app.nextID, nx, ny, nw, nh, app.scrollback, dir, spawnArgs,
+		app.nextID, nx, ny, nw, nh, app.scrollback, app.scrollbackBytes, dir, spawnArgs,
 		app.paneOSCColors(),
 		app.redraw, app.paneDead, app.done, app.oscBuf,
 		app.cellAspect,

@@ -1,6 +1,6 @@
 package main
 
-import "bunk/internal/graphics"
+import "bunker/internal/graphics"
 
 type ptyParseState uint8
 

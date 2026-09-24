@@ -26,7 +26,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"bunk/internal/vt10x"
+	"bunker/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -591,9 +591,9 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			style := tcell.StyleDefault.
 				Foreground(vtColor(cell.FG, rt.fg, rt)).
 				Background(vtColor(cell.BG, rt.bg, rt))
-			if cell.Image != nil {
+			if cell.Image() != nil {
 				bg := vtColor(cell.BG, rt.bg, rt)
-				style = style.Foreground(imageColor(cell.Image.Top, bg)).Background(imageColor(cell.Image.Bottom, bg))
+				style = style.Foreground(imageColor(cell.Image().Top, bg)).Background(imageColor(cell.Image().Bottom, bg))
 			}
 
 			// Erased cells have no decorations, but explicitly printed spaces
@@ -694,7 +694,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			}
 			var combining []rune
 			if ch == cell.Char {
-				combining = []rune(cell.Combining)
+				combining = []rune(cell.Combining())
 			}
 			scr.SetContent(p.x+col, p.y+row, ch, combining, style)
 			if cell.Width == 2 && isBlank && col+1 < p.w-1 {

@@ -30,7 +30,7 @@ import (
 	"time"
 	"unicode"
 
-	"bunk/internal/vt10x"
+	"bunker/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -158,7 +158,7 @@ func (app *App) runSearchScan() {
 			}
 			endColumns = append(endColumns, i+width)
 			if i < len(cells) {
-				for _, c := range cells[i].Combining {
+				for _, c := range cells[i].Combining() {
 					row = append(row, unicode.ToLower(c))
 					positions = append(positions, i)
 					endColumns = append(endColumns, i+width)

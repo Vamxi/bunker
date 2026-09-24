@@ -12,8 +12,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"bunk/internal/graphics"
-	"bunk/internal/vt10x"
+	"bunker/internal/graphics"
+	"bunker/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -58,7 +58,7 @@ func TestGraphicsPaneProtocolsAndClipping(t *testing.T) {
 		if ch != 'S' {
 			t.Fatal("image overwrote scrollbar")
 		}
-		if p.term.Cell(0, 1).Image != nil {
+		if p.term.Cell(0, 1).Image() != nil {
 			t.Fatal("clipped image wrapped to next row")
 		}
 		scr.Fini()
@@ -87,15 +87,15 @@ func TestGraphicsColorsAlphaAndReflow(t *testing.T) {
 	// placements must still survive a width change without sending new replies.
 	p.rawBuf = []byte("\x1b_Ga=p,i=9,c=2,r=1,C=1\x1b\\")
 	p.resize(0, 0, 8, 4)
-	if cell := p.term.Cell(0, 0); cell.Image == nil || cell.Image.Bottom.B != 255 {
+	if cell := p.term.Cell(0, 0); cell.Image() == nil || cell.Image().Bottom.B != 255 {
 		t.Fatal("cached image lost on width reflow")
 	}
 	p.captureAndWrite([]byte("\x1b[4;1H\n"))
-	if p.sb.count == 0 || p.sb.get(0)[0].Image == nil {
+	if p.sb.count == 0 || p.sb.get(0)[0].Image() == nil {
 		t.Fatal("image lost from scrollback")
 	}
 	p.resize(0, 0, 8, 5)
-	if p.term.Cell(0, 0).Image == nil {
+	if p.term.Cell(0, 0).Image() == nil {
 		t.Fatal("height-only reflow lost image")
 	}
 }
@@ -105,7 +105,7 @@ func TestGraphicsPercentageReflowUsesPaneHeight(t *testing.T) {
 	p.captureAndWrite([]byte("\x1b]1337;File=inline=1;width=20%;height=50%;preserveAspectRatio=0:" + graphicsPNG(t) + "\a"))
 	p.resize(0, 0, 10, 6)
 	for row := 0; row < 6; row++ {
-		hasImage := p.term.Cell(0, row).Image != nil
+		hasImage := p.term.Cell(0, row).Image() != nil
 		if hasImage != (row < 3) {
 			t.Fatalf("row %d has image=%v; percentage used scratch height", row, hasImage)
 		}
@@ -186,7 +186,7 @@ func TestGraphicsFramingAbortsMultipart(t *testing.T) {
 		p.captureAndWrite(stream.scan([]byte("\x1b_Ga=T,f=24,s=2,v=1,m=1;/wAA\x1b\\")))
 		p.captureAndWrite(stream.scan([]byte(cancellation)))
 		p.captureAndWrite(stream.scan([]byte("\x1b_Gm=0;AAD/\x1b\\OK")))
-		if p.term.Cell(0, 0).Image != nil || p.term.Cell(0, 0).Char != 'O' {
+		if p.term.Cell(0, 0).Image() != nil || p.term.Cell(0, 0).Char != 'O' {
 			t.Fatal("cancelled upload was resumed")
 		}
 	}

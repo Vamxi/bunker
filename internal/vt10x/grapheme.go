@@ -14,7 +14,7 @@ func (g Glyph) Text() string {
 	if g.Char == 0 {
 		return " "
 	}
-	return string(g.Char) + g.Combining
+	return string(g.Char) + g.Combining()
 }
 
 // extendGrapheme is incremental across Write calls. Controls close the current
@@ -25,6 +25,13 @@ func (t *State) extendGrapheme(c rune) bool {
 	}
 	x, y := t.clusterX, t.clusterY
 	g := t.lines[y][x]
+	// Fast path: an ASCII character after a plain ASCII cell always starts a
+	// new cluster (ASCII has no Extend, ZWJ, SpacingMark, or Prepend code
+	// points), so skip building the string and running segmentation. This
+	// is nearly every character of ordinary output.
+	if c < 0x80 && g.Char < 0x80 && g.ext == nil {
+		return false
+	}
 	text := g.Text() + string(c)
 	_, rest, width, _ := uniseg.FirstGraphemeClusterInString(text, -1)
 	// uniseg 0.4.7 does not widen emoji keycap sequences.
@@ -39,7 +46,7 @@ func (t *State) extendGrapheme(c rune) bool {
 		return true
 	}
 	width = min(t.cols, max(int(g.Width), width))
-	g.Combining += string(c)
+	g.SetCombining(g.Combining() + string(c))
 	if x+width > t.cols {
 		if t.mode&ModeWrap == 0 {
 			return true

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"bunk/internal/vt10x"
+	"bunker/internal/vt10x"
 )
 
 func TestCapabilityValues(t *testing.T) {

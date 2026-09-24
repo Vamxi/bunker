@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"bunk/internal/graphics"
+	"bunker/internal/graphics"
 )
 
 func writeGraphics(t *testing.T, term Terminal, data string) {
@@ -20,7 +20,7 @@ func TestGraphicsCellsCursorAndDeletion(t *testing.T) {
 	term := New(WithSize(6, 4), WithWriter(&replies))
 	writeGraphics(t, term, "\x1b_Ga=T,i=1,p=2,f=24,s=1,v=1,c=2,r=1,C=1;/wAA\x1b\\")
 	for x := 0; x < 2; x++ {
-		if g := term.Cell(x, 0); g.Image == nil || g.Image.Top.R != 255 || g.Char != '▀' {
+		if g := term.Cell(x, 0); g.Image() == nil || g.Image().Top.R != 255 || g.Char != '▀' {
 			t.Fatalf("cell %d: %+v", x, g)
 		}
 	}
@@ -35,15 +35,15 @@ func TestGraphicsCellsCursorAndDeletion(t *testing.T) {
 		t.Fatalf("placement cursor=%+v", cur)
 	}
 	writeGraphics(t, term, "\x1b_Ga=d,d=i,i=1,p=2\x1b\\")
-	if term.Cell(0, 0).Image != nil || term.Cell(1, 1).Image == nil {
+	if term.Cell(0, 0).Image() != nil || term.Cell(1, 1).Image() == nil {
 		t.Fatal("placement deletion affected wrong cells")
 	}
 	writeGraphics(t, term, "\x1b_Ga=d,d=p,x=3,y=2\x1b\\")
-	if term.Cell(1, 1).Image != nil || term.Cell(2, 1).Image != nil {
+	if term.Cell(1, 1).Image() != nil || term.Cell(2, 1).Image() != nil {
 		t.Fatal("point deletion did not remove whole placement")
 	}
 	writeGraphics(t, term, "\x1b_Ga=p,i=1,c=1,r=1,C=1\x1b\\Z")
-	if term.Cell(3, 2).Image != nil || term.Cell(3, 2).Char != 'Z' {
+	if term.Cell(3, 2).Image() != nil || term.Cell(3, 2).Char != 'Z' {
 		t.Fatal("text did not overwrite image")
 	}
 }
@@ -52,25 +52,25 @@ func TestGraphicsClippingScrollingAndAltScreen(t *testing.T) {
 	var history [][]Glyph
 	term := New(WithSize(3, 2), WithScrollCallback(func(row []Glyph) { history = append(history, append([]Glyph(nil), row...)) }))
 	writeGraphics(t, term, "\x1b[1;3H\x1b_Ga=T,f=24,s=1,v=1,c=4,r=3,C=1;/wAA\x1b\\")
-	if len(history) != 0 || term.Cell(0, 1).Image != nil || term.Cell(2, 1).Image == nil {
+	if len(history) != 0 || term.Cell(0, 1).Image() != nil || term.Cell(2, 1).Image() == nil {
 		t.Fatal("image wrapped or scrolled with C=1")
 	}
 	writeGraphics(t, term, "\x1b[?1049h\x1b[2J\x1b[H")
-	if term.Cell(2, 0).Image != nil {
+	if term.Cell(2, 0).Image() != nil {
 		t.Fatal("primary image leaked into alternate screen")
 	}
 	writeGraphics(t, term, "\x1b[?1049l")
-	if term.Cell(2, 0).Image == nil {
+	if term.Cell(2, 0).Image() == nil {
 		t.Fatal("primary image was lost")
 	}
 	writeGraphics(t, term, "\x1b[H\x1bP0;1q#1;2;0;100;0!8~-!8~-!8~\x1b\\")
-	if len(history) == 0 || history[0][0].Image == nil {
+	if len(history) == 0 || history[0][0].Image() == nil {
 		t.Fatal("image did not enter scrollback")
 	}
 	writeGraphics(t, term, "\x1b[2J")
 	for y := 0; y < 2; y++ {
 		for x := 0; x < 3; x++ {
-			if term.Cell(x, y).Image != nil {
+			if term.Cell(x, y).Image() != nil {
 				t.Fatal("erase retained image")
 			}
 		}
@@ -88,7 +88,7 @@ func TestGraphicsOversizedAndCancelledStrings(t *testing.T) {
 		t.Fatal("cancelled image corrupted parser")
 	}
 	writeGraphics(t, term, "\x1b_Gm=0;AAAA\x1b\\")
-	if term.Cell(1, 0).Image != nil {
+	if term.Cell(1, 0).Image() != nil {
 		t.Fatal("cancelled transfer was resumed")
 	}
 }

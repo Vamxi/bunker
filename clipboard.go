@@ -24,7 +24,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"bunk/internal/vt10x"
+	"bunker/internal/vt10x"
 )
 
 // copyToClipboard copies text to the clipboard via OSC 52 and native tools.

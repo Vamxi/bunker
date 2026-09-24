@@ -59,7 +59,7 @@ func TestGraphemeModeAndBounds(t *testing.T) {
 	if _, err := term.Write([]byte("\x1bcA" + strings.Repeat("\u0301", 2000))); err != nil {
 		t.Fatal(err)
 	}
-	if len(term.Cell(0, 0).Combining) > 1024 || term.Cursor().X != 1 {
+	if len(term.Cell(0, 0).Combining()) > 1024 || term.Cursor().X != 1 {
 		t.Fatal("combining sequence not bounded")
 	}
 	if _, err := term.Write([]byte("\rB")); err != nil {

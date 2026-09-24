@@ -30,7 +30,7 @@
 //	Any non-scroll key → snap back to live view automatically
 package main
 
-import "bunk/internal/vt10x"
+import "bunker/internal/vt10x"
 
 // sbRing is a fixed-capacity circular buffer of captured Glyph rows.
 // maxLines must be set before the first push (typically from the config).
@@ -74,6 +74,34 @@ func (s *sbRing) push(row []vt10x.Glyph) {
 		s.lines[slot] = make([]vt10x.Glyph, len(row))
 	}
 	copy(s.lines[slot], row)
+}
+
+// swapIn stores row in the ring without copying, taking ownership of the
+// slice, and returns a same-length buffer the caller may overwrite: the
+// evicted oldest slot when the ring is full, otherwise a fresh allocation.
+// Returns nil (row not captured, caller keeps it) when scrollback is off.
+func (s *sbRing) swapIn(row []vt10x.Glyph) []vt10x.Glyph {
+	if s.maxLines <= 0 {
+		return nil
+	}
+	if s.lines == nil {
+		s.lines = make([][]vt10x.Glyph, s.maxLines)
+	}
+	var old []vt10x.Glyph
+	if s.count < s.maxLines {
+		slot := (s.head + s.count) % s.maxLines
+		old = s.lines[slot]
+		s.lines[slot] = row
+		s.count++
+	} else {
+		old = s.lines[s.head]
+		s.lines[s.head] = row
+		s.head = (s.head + 1) % s.maxLines
+	}
+	if cap(old) >= len(row) {
+		return old[:len(row)]
+	}
+	return make([]vt10x.Glyph, len(row))
 }
 
 // clear empties the ring in place.  Backing row storage is kept so

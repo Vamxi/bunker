@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"bunk/internal/vt10x"
+	"bunker/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -95,7 +95,7 @@ func TestRegressionUnterminatedOSCBounded(t *testing.T) {
 
 func TestRegressionKittySurvivesFirstPoll(t *testing.T) {
 	done := make(chan struct{})
-	p, err := NewPane(0, 0, 0, 40, 3, 100, "", []string{"/bin/sh", "-c", "printf '\033[>1u'; sleep 5"}, hostOSCColors{}, make(chan struct{}, 1), make(chan *Pane, 1), done, newOSCBuffer())
+	p, err := NewPane(0, 0, 0, 40, 3, 100, 0, "", []string{"/bin/sh", "-c", "printf '\033[>1u'; sleep 5"}, hostOSCColors{}, make(chan struct{}, 1), make(chan *Pane, 1), done, newOSCBuffer())
 	if err != nil {
 		t.Fatal(err)
 	}

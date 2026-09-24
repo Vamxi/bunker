@@ -7,10 +7,12 @@
 
 ## Overview
 
-bunk is a lightweight terminal multiplexer written in Go. Each pane is a real
-PTY-backed shell; the screen is divided using a BSP tree; tcell handles host
-terminal I/O. It is used daily with Copilot CLI, Claude Code, btop, vim, and
-other TUI apps.
+bunker is a Linux-only GTK4 terminal written in Go, forked from
+[jsnjack/bunk](https://github.com/jsnjack/bunk). `bunker` opens a GTK window
+that draws a bunk pane through GtkSnapshot (GPU); `bunker tui` still runs
+bunk's multiplexer inside an existing terminal. Both share the core: real
+PTY-backed panes, the vendored vt10x emulator, the BSP layout, scrollback.
+It is used daily with Copilot CLI, Claude Code, btop, vim, and other TUI apps.
 
 ---
 
@@ -18,7 +20,12 @@ other TUI apps.
 
 ```
 main.go             Entry point — calls Execute()
-cmd.go              cobra root command, run(), app initialization
+cmd.go              cobra root (GUI) and "tui" commands, run() for the TUI
+gui.go              GTK application, window, pane spawn, redraw bridge
+gui_view.go         termView widget: frame capture under Pane.mu, snapshot drawing
+gui_glyphs.go       Procedural box drawing, blocks, braille
+gui_input.go        GDK keys → tcell events → keyToBytesMode; mouse; clipboard
+gui_debug.go        BUNKER_SCREENSHOT (C helper) and BUNKER_CPUPROFILE hooks
 cmd_config.go       "bunk config" subcommand tree
 app.go              App struct, event loop, key handling (keyToBytes), triggerRedraw()
 input_modes.go      Application cursor/keypad encoding and host focus forwarding
@@ -55,6 +62,7 @@ internal/graphics/ Bounded SIXEL, Kitty, and iTerm2 static image decoders
 
 third_party/tcell/  Pinned tcell v2.13.9 with overline/keypad/keycap-width patches
                     (local go.mod replacement; see BUNK_PATCHES.md)
+third_party/gotk4/  gotk4 v0.4.1 with subclass-override fixes (BUNKER_PATCHES.md)
 
 assets/             Demo assets (gif)
 scripts/            Manual regression helper scripts
@@ -95,13 +103,26 @@ while holding `Pane.mu`.
 
 ---
 
+## GUI notes
+
+- GTK calls stay on the main thread; goroutines reach it only via
+  `glib.IdleAdd` (see `termView.requestDraw`).
+- The GUI reuses `App` as the pane model with no tcell screen: never call
+  code paths that touch `app.screen` from GUI code.
+- Panes get `cols+1` columns because Pane reserves its last column for the
+  TUI scrollbar; the GUI draws its scrollbar in the padding instead.
+- Never retain `gsk.RenderNode` values: gotk4 wraps them with GObject
+  refcounting although they are not GObjects. Pango layouts are cached.
+- `third_party/gotk4` is a separate module: `./...` does not test it, and a
+  change under `core/glib` recompiles GTK (~9 min).
+
 ## Build & Run
 
 ```bash
 make check    # full validation gate (fmt → vet → race tests → build → lint)
 make test     # tests only (race-enabled)
-make build    # cross-compiles bin/bunk_{linux,darwin}_{amd64,arm64}
-make run      # builds local binary and opens a debug session with --trace
+make build    # native linux/amd64 bin/bunker (cgo + gtk4-devel)
+make run      # builds local binary and runs it with --trace
 ```
 
 Tests run with `-race` and are required to pass before any binary is built.

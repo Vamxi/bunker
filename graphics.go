@@ -6,7 +6,7 @@ import (
 	"math"
 	"unicode/utf8"
 
-	"bunk/internal/graphics"
+	"bunker/internal/graphics"
 
 	"github.com/creack/pty"
 	"github.com/gdamore/tcell/v2"

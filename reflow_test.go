@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"bunk/internal/vt10x"
+	"bunker/internal/vt10x"
 )
 
 // ---------------------------------------------------------------------------
