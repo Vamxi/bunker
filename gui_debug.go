@@ -1,9 +1,10 @@
 // gui_debug.go - offscreen screenshots for manual and scripted checks.
 //
-// BUNKER_TABS="cmd one;cmd two" opens one extra tab per command (run with
+// BUNKER_TABS (one command per line) opens one extra tab per command (run with
 // sh -c), for screenshots of the tab strip.
 //
-// BUNKER_OPEN=preferences opens the Preferences window at startup, and a
+// BUNKER_OPEN=preferences[/page] opens the Preferences window (optionally on
+// a page: appearance, tabs, terminal, advanced) at startup, and a
 // screenshot then captures it instead of the terminal.
 //
 // BUNKER_SCREENSHOT=out.png renders the window through its own GSK renderer
@@ -117,7 +118,7 @@ func guiStartProfile() func() {
 
 func guiDebugExtraTabs() [][]string {
 	var cmds [][]string
-	for _, c := range strings.Split(os.Getenv("BUNKER_TABS"), ";") {
+	for _, c := range strings.Split(os.Getenv("BUNKER_TABS"), "\n") {
 		if c = strings.TrimSpace(c); c != "" {
 			cmds = append(cmds, []string{"/bin/sh", "-c", c})
 		}

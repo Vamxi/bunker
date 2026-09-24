@@ -167,8 +167,11 @@ func (gw *guiWin) build(command []string) {
 		gw.active.view.GrabFocus()
 	}
 
-	if os.Getenv("BUNKER_OPEN") == "preferences" {
+	if open := os.Getenv("BUNKER_OPEN"); strings.HasPrefix(open, "preferences") {
 		gw.openSettings()
+		if _, page, ok := strings.Cut(open, "/"); ok {
+			gw.settings.stack.SetVisibleChildName(page)
+		}
 	}
 	guiScheduleScreenshot(win, func() *gtk.Window {
 		if gw.settings != nil && gw.settings.win.IsVisible() {
@@ -392,13 +395,42 @@ func guiInstallCSS() {
 	border-radius: 8px;
 	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
-.bunker-settings-heading {
-	font-weight: bold;
-	margin-top: 12px;
+.bunker-page-title {
+	font-size: 1.5em;
+	font-weight: 800;
 }
-.bunker-settings-hint {
-	opacity: 0.7;
-	font-size: smaller;
+.bunker-group-title {
+	font-weight: bold;
+	margin-bottom: 2px;
+}
+.bunker-dim {
+	opacity: 0.65;
+	font-size: 0.92em;
+}
+list.bunker-card {
+	background-color: alpha(currentColor, 0.05);
+	border: 1px solid alpha(currentColor, 0.10);
+	border-radius: 12px;
+	margin-top: 4px;
+}
+list.bunker-card > row {
+	border-bottom: 1px solid alpha(currentColor, 0.08);
+	background: none;
+}
+list.bunker-card > row:last-child {
+	border-bottom: none;
+}
+.bunker-row {
+	padding: 10px 14px;
+	min-height: 34px;
+}
+.bunker-settings-error {
+	background-color: #c01c28;
+	color: white;
+	padding: 8px 14px;
+}
+.bunker-settings-sidebar {
+	padding: 8px 0;
 }
 `)
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), css, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)

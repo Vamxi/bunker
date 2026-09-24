@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/diamondburned/gotk4/pkg/pango"
 )
@@ -26,9 +27,13 @@ type guiTab struct {
 
 	row      *gtk.Box
 	title    *gtk.Label
+	entry    *gtk.Entry // rename field, shown while editing
 	activity *gtk.Label
 	lastSeen string // last title shown
 	closed   bool
+
+	customTitle string // set by renaming; "" = follow the program's title
+	editing     bool
 }
 
 // newTabApp builds the pane model for one tab from the current config.
@@ -130,19 +135,46 @@ func (t *guiTab) redrawBridge() {
 func (t *guiTab) buildRow() {
 	t.activity = gtk.NewLabel("●")
 	t.activity.AddCSSClass("bunker-tab-activity")
+	t.activity.SetTooltipText("New output")
+	t.activity.SetVAlign(gtk.AlignCenter)
 	t.activity.SetVisible(false)
 
+	// Every child is centred vertically: titles often start with a symbol
+	// from a fallback font (Claude Code's ✳) whose taller line metrics
+	// would otherwise push the text off-centre.
 	t.title = gtk.NewLabel("shell")
-	t.title.SetXAlign(0)
+	t.title.SetXAlign(t.gw.tabTextAlign())
 	t.title.SetHExpand(true)
+	t.title.SetVAlign(gtk.AlignCenter)
+	t.title.SetSingleLineMode(true)
 	t.title.SetEllipsize(pango.EllipsizeEnd)
 	t.title.SetMaxWidthChars(28)
+
+	t.entry = gtk.NewEntry()
+	t.entry.AddCSSClass("bunker-tab-entry")
+	t.entry.SetHExpand(true)
+	t.entry.SetVAlign(gtk.AlignCenter)
+	t.entry.SetVisible(false)
+	t.entry.ConnectActivate(func() { t.finishRename(true) })
+	entryKeys := gtk.NewEventControllerKey()
+	entryKeys.ConnectKeyPressed(func(keyval, _ uint, _ gdk.ModifierType) bool {
+		if keyval == gdk.KEY_Escape {
+			t.finishRename(false)
+			return true
+		}
+		return false
+	})
+	t.entry.AddController(entryKeys)
+	entryFocus := gtk.NewEventControllerFocus()
+	entryFocus.ConnectLeave(func() { t.finishRename(true) })
+	t.entry.AddController(entryFocus)
 
 	closeBtn := gtk.NewButtonFromIconName("window-close-symbolic")
 	closeBtn.SetHasFrame(false)
 	closeBtn.SetFocusOnClick(false)
 	closeBtn.SetCanFocus(false)
 	closeBtn.AddCSSClass("bunker-tab-close")
+	closeBtn.SetVAlign(gtk.AlignCenter)
 	closeBtn.SetTooltipText("Close Tab")
 	closeBtn.ConnectClicked(func() { t.gw.closeTab(t) })
 
@@ -150,14 +182,21 @@ func (t *guiTab) buildRow() {
 	t.row.AddCSSClass("bunker-tab")
 	t.row.Append(t.activity)
 	t.row.Append(t.title)
+	t.row.Append(t.entry)
 	t.row.Append(closeBtn)
 
 	click := gtk.NewGestureClick()
 	click.SetButton(0)
-	click.ConnectPressed(func(_ int, _, _ float64) {
+	click.ConnectPressed(func(n int, _, _ float64) {
+		if t.editing {
+			return
+		}
 		switch click.CurrentButton() {
 		case 1:
 			t.gw.selectTab(t)
+			if n == 2 {
+				t.startRename()
+			}
 		case 2:
 			t.gw.closeTab(t)
 		}
@@ -177,6 +216,9 @@ func (t *guiTab) refreshTitle() {
 	if p != nil {
 		title = sanitizeTitle(paneDisplayTitle(p, "shell"))
 	}
+	if t.customTitle != "" {
+		title = t.customTitle
+	}
 	if title == t.lastSeen {
 		return
 	}
@@ -186,6 +228,47 @@ func (t *guiTab) refreshTitle() {
 	if t == t.gw.active {
 		t.gw.win.SetTitle(title)
 	}
+}
+
+// startRename swaps the title for an entry (double-click on a tab).
+func (t *guiTab) startRename() {
+	if t.editing || t.closed {
+		return
+	}
+	t.editing = true
+	t.entry.SetText(t.title.Text())
+	t.title.SetVisible(false)
+	t.entry.SetVisible(true)
+	t.entry.GrabFocus()
+	t.entry.SelectRegion(0, -1)
+}
+
+// finishRename ends editing. Committing an empty name returns the tab to
+// the program's own title.
+func (t *guiTab) finishRename(commit bool) {
+	if !t.editing {
+		return
+	}
+	t.editing = false
+	if commit {
+		t.customTitle = strings.TrimSpace(t.entry.Text())
+	}
+	t.entry.SetVisible(false)
+	t.title.SetVisible(true)
+	t.lastSeen = ""
+	t.refreshTitle()
+	if t == t.gw.active {
+		t.view.GrabFocus()
+	}
+}
+
+// tabTextAlign centres titles in a horizontal bar and left-aligns them in
+// a sidebar.
+func (gw *guiWin) tabTextAlign() float32 {
+	if gw.cfg.Tabs.Position == "top" || gw.cfg.Tabs.Position == "bottom" {
+		return 0.5
+	}
+	return 0
 }
 
 func (gw *guiWin) selectTab(t *guiTab) {
@@ -318,6 +401,9 @@ func (gw *guiWin) applyTabsLayout() {
 		gw.stripScroll.SetHExpand(true)
 		gw.stripScroll.SetVExpand(false)
 	}
+	for _, t := range gw.tabs {
+		t.title.SetXAlign(gw.tabTextAlign())
+	}
 	for _, side := range []string{"left", "right", "top", "bottom"} {
 		gw.stripScroll.RemoveCSSClass(side)
 	}
@@ -417,5 +503,6 @@ window.bunker-window headerbar windowcontrols button:hover > image { background-
 .bunker-tab .bunker-tab-close { min-width: 22px; min-height: 22px; padding: 0; opacity: 0; }
 .bunker-tab:hover .bunker-tab-close, .bunker-tab.active .bunker-tab-close { opacity: 0.75; }
 .bunker-tab-activity { color: @accent; font-size: 9px; }
+.bunker-tab entry.bunker-tab-entry { min-height: 24px; padding: 0 6px; background-color: @bg; color: @fg; }
 `)
 }
