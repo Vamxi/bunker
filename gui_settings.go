@@ -35,6 +35,7 @@ type settingsWindow struct {
 	tabsPos      *gtk.DropDown
 	tabsWidth    *gtk.SpinButton
 	tabsHide     *gtk.Switch
+	tabsCollapse *gtk.Switch
 	scrollback   *gtk.SpinButton
 	scrollbackMB *gtk.SpinButton
 	status       *gtk.Label
@@ -255,6 +256,14 @@ func (s *settingsWindow) buildTabs(p *settingsPage) {
 	})
 	g.row("Hide with a single tab", "", s.tabsHide)
 
+	s.tabsCollapse = gtk.NewSwitch()
+	s.tabsCollapse.NotifyProperty("active", func() {
+		if !s.updating {
+			s.write("tabs", "collapsed", strconv.FormatBool(s.tabsCollapse.Active()))
+		}
+	})
+	g.row("Start collapsed", "The sidebar shows one character per tab: its number, or the first letter of a name you gave it. The header-bar button toggles it.", s.tabsCollapse)
+
 	g = p.group("Shortcuts", "")
 	for _, sc := range [][2]string{
 		{"New tab in the current directory", "Ctrl+Shift+T"},
@@ -338,6 +347,7 @@ func (s *settingsWindow) load(cfg Config) {
 	}
 	s.tabsWidth.SetValue(float64(cfg.Tabs.Width))
 	s.tabsHide.SetActive(cfg.Tabs.Autohide)
+	s.tabsCollapse.SetActive(cfg.Tabs.Collapsed)
 	s.scrollback.SetValue(float64(cfg.Scrollback))
 	s.scrollbackMB.SetValue(float64(cfg.ScrollbackBytes >> 20))
 }

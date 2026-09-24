@@ -45,6 +45,8 @@ type guiWin struct {
 	stripScroll *gtk.ScrolledWindow
 	layout      *gtk.Box
 	themeCSS    *gtk.CSSProvider
+	sidebarBtn  *gtk.Button
+	collapsed   bool // this window's sidebar state; starts from [tabs] collapsed
 
 	cfg           Config
 	configPath    string // "" = default location
@@ -86,7 +88,7 @@ func runGUI(configPath, themeName string, debug, trace bool, command []string) e
 	var windows []*guiWin
 	gapp := gtk.NewApplication(guiAppID, gio.ApplicationNonUnique)
 	gapp.ConnectActivate(func() {
-		gw := &guiWin{gapp: gapp, cfg: cfg, configPath: configPath, themeOverride: themeName}
+		gw := &guiWin{gapp: gapp, cfg: cfg, configPath: configPath, themeOverride: themeName, collapsed: cfg.Tabs.Collapsed}
 		windows = append(windows, gw)
 		gw.build(command)
 	})
@@ -199,7 +201,13 @@ func (gw *guiWin) headerBar() *gtk.HeaderBar {
 	newTab.SetFocusOnClick(false)
 	newTab.SetActionName("win.new-tab")
 
+	gw.sidebarBtn = gtk.NewButtonFromIconName("sidebar-show-symbolic")
+	gw.sidebarBtn.SetTooltipText("Collapse or Expand Tabs")
+	gw.sidebarBtn.SetFocusOnClick(false)
+	gw.sidebarBtn.SetActionName("win.toggle-tabs")
+
 	bar := gtk.NewHeaderBar()
+	bar.PackStart(gw.sidebarBtn)
 	bar.PackStart(newTab)
 	bar.PackEnd(button)
 	return bar
@@ -222,6 +230,7 @@ func (gw *guiWin) installActions() {
 			gw.closeTab(gw.active)
 		}
 	})
+	add("toggle-tabs", nil, func() { gw.setCollapsed(!gw.collapsed) })
 	add("next-tab", []string{"<Control>Page_Down"}, func() { gw.selectRelative(1) })
 	add("prev-tab", []string{"<Control>Page_Up"}, func() { gw.selectRelative(-1) })
 }
@@ -306,6 +315,9 @@ func (gw *guiWin) reload() {
 // apply pushes a config into the running window and every tab.
 func (gw *guiWin) apply(cfg Config) {
 	themeChanged := cfg.Theme != gw.cfg.Theme
+	if cfg.Tabs.Collapsed != gw.cfg.Tabs.Collapsed {
+		gw.collapsed = cfg.Tabs.Collapsed // a changed default applies now
+	}
 	gw.cfg = cfg
 
 	for _, t := range gw.tabs {

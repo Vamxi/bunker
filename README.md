@@ -49,6 +49,7 @@ grm install Vamxi/bunker
 |---|---|
 | `Ctrl+Shift+T` / `Ctrl+Shift+W` | New tab (in the current directory) / close tab |
 | `Ctrl+PgUp` / `Ctrl+PgDn` | Previous / next tab (middle-click a tab to close it) |
+| Sidebar button (header bar) | Collapse the tab sidebar to one character per tab (number, or the first letter of a custom name); `[tabs] collapsed` sets the default |
 | `Ctrl+,` | Preferences |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste (`Shift+Insert` also pastes) |
 | `Ctrl+Shift+=` / `Ctrl+Shift+-` / `Ctrl+Shift+0` | Font bigger / smaller / reset |
@@ -86,6 +87,7 @@ padding = 8
 position = "left"               # left | right | top | bottom
 width    = 220                  # sidebar width
 autohide = false                # hide the strip with a single tab
+collapsed = false               # start the sidebar collapsed
 ```
 
 ## Performance

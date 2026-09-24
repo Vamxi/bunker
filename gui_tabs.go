@@ -10,6 +10,7 @@ package main
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
@@ -18,7 +19,10 @@ import (
 	"github.com/diamondburned/gotk4/pkg/pango"
 )
 
-const guiTitlePollSeconds = 1 // tab titles follow cwd/process changes
+const (
+	guiTitlePollSeconds = 1  // tab titles follow cwd/process changes
+	guiCollapsedWidth   = 46 // sidebar width when collapsed to one character
+)
 
 type guiTab struct {
 	gw   *guiWin
@@ -26,6 +30,8 @@ type guiTab struct {
 	view *termView
 
 	row      *gtk.Box
+	short    *gtk.Label // one-character label for the collapsed sidebar
+	closeBtn *gtk.Button
 	title    *gtk.Label
 	entry    *gtk.Entry // rename field, shown while editing
 	activity *gtk.Label
@@ -106,6 +112,7 @@ func (gw *guiWin) newTab(dir string, command []string) *guiTab {
 		}
 	}()
 
+	t.applyRowMode()
 	gw.selectTab(t)
 	gw.updateStripVisibility()
 	return t
@@ -123,7 +130,7 @@ func (t *guiTab) redrawBridge() {
 			t.view.requestDraw()
 			coreglib.IdleAdd(func() {
 				if t != t.gw.active && !t.closed {
-					t.activity.SetVisible(true)
+					t.setActivity(true)
 				}
 			})
 		case <-app.done:
@@ -178,8 +185,17 @@ func (t *guiTab) buildRow() {
 	closeBtn.SetTooltipText("Close Tab")
 	closeBtn.ConnectClicked(func() { t.gw.closeTab(t) })
 
+	t.closeBtn = closeBtn
+
+	t.short = gtk.NewLabel("")
+	t.short.AddCSSClass("bunker-tab-short")
+	t.short.SetHExpand(true)
+	t.short.SetXAlign(0.5)
+	t.short.SetVAlign(gtk.AlignCenter)
+
 	t.row = gtk.NewBox(gtk.OrientationHorizontal, 6)
 	t.row.AddCSSClass("bunker-tab")
+	t.row.Append(t.short)
 	t.row.Append(t.activity)
 	t.row.Append(t.title)
 	t.row.Append(t.entry)
@@ -195,6 +211,9 @@ func (t *guiTab) buildRow() {
 		case 1:
 			t.gw.selectTab(t)
 			if n == 2 {
+				if t.gw.isCollapsed() {
+					t.gw.setCollapsed(false) // renaming needs the full width
+				}
 				t.startRename()
 			}
 		case 2:
@@ -230,6 +249,42 @@ func (t *guiTab) refreshTitle() {
 	}
 }
 
+// setActivity marks background output: a dot when expanded, an accent
+// colour on the short label when collapsed.
+func (t *guiTab) setActivity(on bool) {
+	if on {
+		t.row.AddCSSClass("has-activity")
+	} else {
+		t.row.RemoveCSSClass("has-activity")
+	}
+	t.activity.SetVisible(on && !t.gw.isCollapsed())
+}
+
+// shortLabel is the collapsed-sidebar label: the first character of a
+// custom name, else the tab's position.
+func (t *guiTab) shortLabel() string {
+	for _, r := range t.customTitle {
+		return strings.ToUpper(string(r))
+	}
+	return strconv.Itoa(slices.Index(t.gw.tabs, t) + 1)
+}
+
+// applyRowMode shows either the full row or the one-character label.
+func (t *guiTab) applyRowMode() {
+	collapsed := t.gw.isCollapsed()
+	t.short.SetText(t.shortLabel())
+	t.short.SetVisible(collapsed)
+	t.title.SetVisible(!collapsed && !t.editing)
+	t.entry.SetVisible(!collapsed && t.editing)
+	t.closeBtn.SetVisible(!collapsed)
+	t.activity.SetVisible(!collapsed && t.row.HasCSSClass("has-activity"))
+	if collapsed {
+		t.row.AddCSSClass("collapsed")
+	} else {
+		t.row.RemoveCSSClass("collapsed")
+	}
+}
+
 // startRename swaps the title for an entry (double-click on a tab).
 func (t *guiTab) startRename() {
 	if t.editing || t.closed {
@@ -257,6 +312,7 @@ func (t *guiTab) finishRename(commit bool) {
 	t.title.SetVisible(true)
 	t.lastSeen = ""
 	t.refreshTitle()
+	t.applyRowMode() // the short label follows a new name
 	if t == t.gw.active {
 		t.view.GrabFocus()
 	}
@@ -281,7 +337,7 @@ func (gw *guiWin) selectTab(t *guiTab) {
 	gw.active = t
 	L.Debug("gui: select tab", "index", slices.Index(gw.tabs, t))
 	t.row.AddCSSClass("active")
-	t.activity.SetVisible(false)
+	t.setActivity(false)
 	gw.stack.SetVisibleChild(t.view)
 	t.view.GrabFocus()
 	t.lastSeen = "" // force the window title to follow
@@ -313,6 +369,9 @@ func (gw *guiWin) closeTab(t *guiTab) {
 	})
 	gw.stack.Remove(t.view)
 	gw.strip.Remove(t.row)
+	for _, other := range gw.tabs {
+		other.applyRowMode() // numbers shift down
+	}
 
 	if len(gw.tabs) == 0 {
 		gw.win.Close()
@@ -387,10 +446,14 @@ func (gw *guiWin) applyTabsLayout() {
 
 	vertical := tc.Position == "left" || tc.Position == "right"
 	if vertical {
+		width := tc.Width
+		if gw.collapsed {
+			width = guiCollapsedWidth
+		}
 		gw.layout.SetOrientation(gtk.OrientationHorizontal)
 		gw.strip.SetOrientation(gtk.OrientationVertical)
 		gw.stripScroll.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
-		gw.stripScroll.SetSizeRequest(tc.Width, -1)
+		gw.stripScroll.SetSizeRequest(width, -1)
 		gw.stripScroll.SetHExpand(false)
 		gw.stripScroll.SetVExpand(true)
 	} else {
@@ -403,6 +466,20 @@ func (gw *guiWin) applyTabsLayout() {
 	}
 	for _, t := range gw.tabs {
 		t.title.SetXAlign(gw.tabTextAlign())
+		t.applyRowMode()
+	}
+	if gw.isCollapsed() {
+		gw.strip.AddCSSClass("collapsed")
+	} else {
+		gw.strip.RemoveCSSClass("collapsed")
+	}
+	if gw.sidebarBtn != nil {
+		gw.sidebarBtn.SetVisible(vertical)
+		if tc.Position == "right" {
+			gw.sidebarBtn.SetIconName("sidebar-show-right-symbolic")
+		} else {
+			gw.sidebarBtn.SetIconName("sidebar-show-symbolic")
+		}
 	}
 	for _, side := range []string{"left", "right", "top", "bottom"} {
 		gw.stripScroll.RemoveCSSClass(side)
@@ -420,6 +497,22 @@ func (gw *guiWin) applyTabsLayout() {
 	if gw.active != nil {
 		gw.active.view.GrabFocus()
 	}
+}
+
+// isCollapsed reports whether the sidebar shows one character per tab;
+// collapsing only applies to a left or right sidebar.
+func (gw *guiWin) isCollapsed() bool {
+	pos := gw.cfg.Tabs.Position
+	return gw.collapsed && (pos == "left" || pos == "right")
+}
+
+// setCollapsed narrows or widens the sidebar for this window.
+func (gw *guiWin) setCollapsed(collapsed bool) {
+	if gw.collapsed == collapsed {
+		return
+	}
+	gw.collapsed = collapsed
+	gw.applyTabsLayout()
 }
 
 func (gw *guiWin) updateStripVisibility() {
@@ -485,7 +578,7 @@ window.bunker-window headerbar {
 	border-bottom: 1px solid @line;
 }
 window.bunker-window headerbar:backdrop { background: @bg; color: @dim; }
-window.bunker-window headerbar button { color: inherit; background: transparent; box-shadow: none; }
+window.bunker-window headerbar button { color: inherit; background: transparent; box-shadow: none; border-color: transparent; }
 window.bunker-window headerbar button:hover { background-color: @hover; }
 window.bunker-window headerbar button:active,
 window.bunker-window headerbar button:checked { background-color: @selected; }
@@ -503,6 +596,10 @@ window.bunker-window headerbar windowcontrols button:hover > image { background-
 .bunker-tab .bunker-tab-close { min-width: 22px; min-height: 22px; padding: 0; opacity: 0; }
 .bunker-tab:hover .bunker-tab-close, .bunker-tab.active .bunker-tab-close { opacity: 0.75; }
 .bunker-tab-activity { color: @accent; font-size: 9px; }
+.bunker-tab.collapsed { padding: 5px 0; }
+.bunker-tab-short { font-weight: bold; }
+.bunker-tab.has-activity .bunker-tab-short { color: @accent; }
+.bunker-tab-list.collapsed { padding: 6px 4px; }
 .bunker-tab entry.bunker-tab-entry { min-height: 24px; padding: 0 6px; background-color: @bg; color: @fg; }
 `)
 }
