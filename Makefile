@@ -92,7 +92,12 @@ run: test
 	> /tmp/bunk.log
 	./$(BINARY) --trace
 
+# Install the binary to ~/.local/bin and add bunker to the app grid.
+install: build
+	install -Dm755 bin/$(BINARY) $(HOME)/.local/bin/$(BINARY)
+	$(HOME)/.local/bin/$(BINARY) install-desktop
+
 clean:
 	rm -rf bin/ $(BINARY)
 
-.PHONY: version build release test test-gui bench bench-baseline vet fmt lint check standards run clean
+.PHONY: version build release install test test-gui bench bench-baseline vet fmt lint check standards run clean

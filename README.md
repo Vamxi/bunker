@@ -1,7 +1,8 @@
-# bunker
+<p align="center"><img src="assets/icon/bunker-256.png" width="128" alt="bunker"></p>
 
-A fast GTK4 terminal for Linux, with [bunk](https://github.com/jsnjack/bunk)
-built in.
+<h1 align="center">bunker</h1>
+
+<p align="center">A fast GTK4 terminal for Linux, with <a href="https://github.com/jsnjack/bunk">bunk</a> built in.</p>
 
 > bunker is built on **[bunk](https://github.com/jsnjack/bunk) by
 > [jsnjack](https://github.com/jsnjack)**: panes, the terminal emulator,
@@ -16,6 +17,7 @@ built in.
 - **bunk in every tab:** split panes, context-aware splits into the same
   container / SSH host / sudo, zoom, search, status badges
 - **Tabs** in a sidebar (collapsible) or a bar, renamable, coloured by the theme
+- **20 themes**, following your desktop's light/dark by default (`bunker themes`)
 - **GPU rendering**, one Go binary, no Electron
 - **Preferences** (Ctrl+,) that edit a plain config file; editor changes apply live
 - **Clickable links:** Ctrl+click URLs and `ls --hyperlink` links
@@ -27,11 +29,11 @@ Needs GTK 4 (already on GNOME desktops).
 
 ```bash
 grm install Vamxi/bunker
-bunker
+bunker install-desktop    # adds bunker to the app grid and dock
 ```
 
-Or build it: `sudo dnf install gtk4-devel && make build` (the first build
-takes a few minutes).
+Or build and install it: `sudo dnf install gtk4-devel && make install` (the
+first build takes a few minutes).
 
 ## Keys
 
@@ -59,7 +61,7 @@ Coming from bunk? Your config works as-is:
 `cp ~/.config/bunk/config.toml ~/.config/bunker/`
 
 ```toml
-theme = "nord"               # default, solarized-dark, dracula, nord
+theme = "system"             # follows the desktop; or dark-pastel, nord, ...
 font  = "JetBrains Mono 12"
 
 [tabs]

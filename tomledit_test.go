@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -206,5 +207,27 @@ func TestLoadConfigGUIFieldsDefaults(t *testing.T) {
 	}
 	if cfg.Font != defaultFont || cfg.Tabs.Position != "left" || cfg.Tabs.Width != minTabsWidth || cfg.Padding != defaultPadding {
 		t.Fatalf("defaults not applied: %+v", cfg)
+	}
+}
+
+func TestWriteIconsAndDesktopEntry(t *testing.T) {
+	root := t.TempDir()
+	if err := writeIcons(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range iconSizes {
+		p := filepath.Join(root, "hicolor", strconv.Itoa(n)+"x"+strconv.Itoa(n), "apps", guiAppID+".png")
+		if st, err := os.Stat(p); err != nil || st.Size() == 0 {
+			t.Errorf("icon %dpx missing: %v", n, err)
+		}
+	}
+	if err := writeIcons(root); err != nil { // idempotent
+		t.Fatal(err)
+	}
+	entry := desktopEntry("/opt/bunker")
+	for _, want := range []string{"Exec=/opt/bunker", "Icon=" + guiAppID, "StartupWMClass=" + guiAppID, "Categories=System;TerminalEmulator;"} {
+		if !strings.Contains(entry, want) {
+			t.Errorf("desktop entry lacks %q", want)
+		}
 	}
 }

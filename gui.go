@@ -109,7 +109,14 @@ func runGUI(configPath, themeName string, debug, trace bool, command []string) e
 // inherits host colours, and a window has no host. BUNKER_FONT overrides
 // the configured font (handy for trying fonts without editing the file).
 func guiConfig(cfg Config) Config {
-	if cfg.Theme.bg == tcell.ColorDefault || cfg.Theme.fg == tcell.ColorDefault {
+	switch {
+	case cfg.ThemeName == systemThemeName:
+		name := "gnome-light"
+		if guiDesktopPrefersDark() {
+			name = "gnome"
+		}
+		cfg.Theme = resolveTheme(BuiltinThemes[name])
+	case cfg.Theme.bg == tcell.ColorDefault || cfg.Theme.fg == tcell.ColorDefault:
 		cfg.Theme = resolveTheme(BuiltinThemes[defaultThemeName])
 		cfg.ThemeName = defaultThemeName
 	}
@@ -159,6 +166,30 @@ func (gw *guiWin) build(command []string) {
 	gw.runDebugHooks()
 	gw.watchConfig()
 	gw.pollTitles()
+	// The system theme follows the desktop's light/dark switch live.
+	if s := gtk.SettingsGetDefault(); s != nil {
+		s.NotifyProperty("gtk-interface-color-scheme", func() {
+			if gw.cfg.ThemeName == systemThemeName {
+				gw.reload()
+			}
+		})
+	}
+}
+
+// guiDesktopPrefersDark reports the desktop's colour scheme (GTK reads it
+// from the settings portal). No preference means light, as on GNOME; a
+// desktop without the setting gets dark, the usual terminal look.
+func guiDesktopPrefersDark() bool {
+	s := gtk.SettingsGetDefault()
+	if s == nil {
+		return true
+	}
+	scheme, _ := s.ObjectProperty("gtk-interface-color-scheme").(gtk.InterfaceColorScheme)
+	switch scheme {
+	case gtk.InterfaceColorSchemeLight, gtk.InterfaceColorSchemeDefault:
+		return false
+	}
+	return true
 }
 
 func (gw *guiWin) headerBar() *gtk.HeaderBar {

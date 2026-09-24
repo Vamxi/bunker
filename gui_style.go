@@ -25,6 +25,11 @@ var (
 func guiApplyTheme(rt resolvedTheme) {
 	guiStyleOnce.Do(func() {
 		display := gdk.DisplayGetDefault()
+		// The window icon: embedded, unpacked to the cache (see desktop.go).
+		if dir := iconCacheDir(); writeIcons(dir) == nil {
+			gtk.IconThemeGetForDisplay(display).AddSearchPath(dir)
+		}
+		gtk.WindowSetDefaultIconName(guiAppID)
 		static := gtk.NewCSSProvider()
 		static.LoadFromString(guiStaticCSS)
 		gtk.StyleContextAddProviderForDisplay(display, static, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)

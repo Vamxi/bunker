@@ -51,7 +51,7 @@ func guiThemeNames() []string {
 		}
 	}
 	slices.Sort(names)
-	return names
+	return append([]string{systemThemeName}, names...)
 }
 
 func (gw *guiWin) openSettings() {
@@ -202,6 +202,10 @@ func newSettingsWindow(gw *guiWin) *settingsWindow {
 func (s *settingsWindow) buildAppearance(p *settingsPage) {
 	g := p.group("Colours", "")
 	s.theme = gtk.NewDropDownFromStrings(s.themes)
+	// Type to filter the list.
+	s.theme.SetEnableSearch(true)
+	s.theme.SetExpression(gtk.NewPropertyExpression(gtk.GTypeStringObject, nil, "string"))
+	s.theme.SetSearchMatchMode(gtk.StringFilterMatchModeSubstring)
 	s.theme.NotifyProperty("selected", func() {
 		if i := int(s.theme.Selected()); !s.updating && i < len(s.themes) {
 			s.write("", "theme", tomlString(s.themes[i]))

@@ -66,7 +66,11 @@ const (
 	maxTabsWidth     = 600
 	defaultTabsSide  = "left"
 	defaultThemeName = "default"
-	configDirName    = "bunker"
+	// systemThemeName follows the desktop: GNOME's palette in the window,
+	// light or dark with the desktop setting; the host's colours in the TUI.
+	// It is the default so a fresh install takes no side.
+	systemThemeName = "system"
+	configDirName   = "bunker"
 )
 
 type uiOverride struct {
@@ -472,7 +476,7 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 	}
 
 	fc := fileConfig{
-		Theme:    defaultThemeName,
+		Theme:    systemThemeName,
 		LogFile:  "/tmp/bunk.log",
 		LogLevel: "info",
 		Font:     defaultFont,
@@ -490,6 +494,9 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 	}
 
 	def, ok := BuiltinThemes[fc.Theme]
+	if fc.Theme == systemThemeName {
+		def, ok = BuiltinThemes["terminal"], true // the GUI resolves it in guiConfig
+	}
 	if !ok {
 		L.Warn("config: unknown theme, using default", "theme", fc.Theme)
 		fc.Theme = defaultThemeName
@@ -584,9 +591,12 @@ func DefaultConfigTOML() string {
 # Settings (Ctrl+,) edits this file in place and keeps your comments.
 # Changes saved here from an editor apply to open windows immediately.
 
-# Built-in themes: default, solarized-dark, dracula, nord
-# ("terminal" inherits host colours and only applies to bunker tui).
-theme = "default"
+# "system" follows your desktop: GNOME's palette, light or dark with the
+# desktop setting (in bunker tui: your terminal's own colours).
+# Others: default, dark-pastel, dracula, nord, solarized, gnome, tango,
+# vs-code, horizon, high-contrast (most with a -light variant);
+# "bunker themes" lists them.
+theme = "system"
 
 # Font: a Pango font description, family then size.
 font = "Monospace 11"
