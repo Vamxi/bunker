@@ -1,9 +1,8 @@
 package vt10x
 
 import (
+	"bytes"
 	"fmt"
-	"strconv"
-	"strings"
 )
 
 // CSI (Control Sequence Introducer)
@@ -36,50 +35,104 @@ func (c *csiEscape) parse() {
 	if len(c.buf) == 1 {
 		return
 	}
-	s := string(c.buf)
+	s := c.buf
 	c.args = c.args[:0]
 	if s[0] == '?' {
 		c.priv = true
 		s = s[1:]
 	}
 	s = s[:len(s)-1]
-	ss := strings.Split(s, ";")
-	for _, p := range ss {
+	// Parsed in place over the bytes: this runs for every SGR, and building
+	// strings to split cost several allocations per colour change. Parsing
+	// stops at the first parameter strconv.Atoi would reject, as it always
+	// has (see TestCSIParseMatchesReference).
+	for {
+		p := s
+		if k := bytes.IndexByte(s, ';'); k >= 0 {
+			p, s = s[:k], s[k+1:]
+		} else {
+			s = nil
+		}
 		// Handle sub-parameters separated by ':' (e.g. "4:3" for curly underline,
 		// "38:2:R:G:B" for RGB colour).  Encode as main*10000+sub so setAttr can
 		// distinguish them from plain parameters without a separate data structure.
 		// Only the FIRST sub-parameter is encoded; deeper sub-params (e.g. the
 		// R:G:B in 38:2:R:G:B) are passed as separate ';'-equivalent args below.
-		if idx := strings.IndexByte(p, ':'); idx >= 0 {
-			main, err := strconv.Atoi(p[:idx])
-			if err != nil {
+		if idx := bytes.IndexByte(p, ':'); idx >= 0 {
+			main, ok := atoi(p[:idx])
+			if !ok {
 				break
 			}
-			rest := p[idx+1:]
 			// For multi-sub-param forms (e.g. "38:2:255:0:128"), flatten all
 			// sub-params into individual args so the existing colour-parsing
 			// logic in setAttr can handle them identically to the ';' form.
-			subParts := strings.Split(rest, ":")
-			sub, err := strconv.Atoi(subParts[0])
-			if err != nil {
+			rest := p[idx+1:]
+			first := rest
+			if k := bytes.IndexByte(rest, ':'); k >= 0 {
+				first, rest = rest[:k], rest[k+1:]
+			} else {
+				rest = nil
+			}
+			sub, ok := atoi(first)
+			if !ok {
 				sub = 0
 			}
 			c.args = append(c.args, main*10000+sub+1) // +1: distinguishes 4:0 (→40001) from plain 4 (→4)
-			for _, sp := range subParts[1:] {
-				v, err := strconv.Atoi(sp)
-				if err != nil {
+			for rest != nil {
+				sp := rest
+				if k := bytes.IndexByte(rest, ':'); k >= 0 {
+					sp, rest = rest[:k], rest[k+1:]
+				} else {
+					rest = nil
+				}
+				v, ok := atoi(sp)
+				if !ok {
 					break
 				}
 				c.args = append(c.args, v)
 			}
 		} else {
-			i, err := strconv.Atoi(p)
-			if err != nil {
+			i, ok := atoi(p)
+			if !ok {
 				break
 			}
 			c.args = append(c.args, i)
 		}
+		if s == nil {
+			break
+		}
 	}
+}
+
+// atoi is strconv.Atoi over bytes without allocating: optional sign, then
+// one or more decimal digits, within int range.
+func atoi(b []byte) (int, bool) {
+	neg := false
+	if len(b) > 0 && (b[0] == '+' || b[0] == '-') {
+		neg = b[0] == '-'
+		b = b[1:]
+	}
+	if len(b) == 0 {
+		return 0, false
+	}
+	const cutoff = uint64(1) << 63
+	var n uint64
+	for _, c := range b {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + uint64(c-'0')
+		if n > cutoff {
+			return 0, false
+		}
+	}
+	if !neg && n == cutoff {
+		return 0, false
+	}
+	if neg {
+		return int(-n), true
+	}
+	return int(n), true
 }
 
 func (c *csiEscape) arg(i, def int) int {

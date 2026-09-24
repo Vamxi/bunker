@@ -35,6 +35,11 @@ func paneWinsize(cols, rows, cellWidth, cellHeight int) *pty.Winsize {
 
 // Graphics controls can dwarf the normal text history budget. Retain a bounded
 // replay window, and never start replay inside a control or a UTF-8 codepoint.
+//
+// Once over budget the buffer is cut to 3/4 of it and compacted in place.
+// Cutting just to the budget made every following chunk trim again, and
+// re-slicing from the front stranded the prefix so the next append
+// reallocated the whole buffer: megabytes of garbage per chunk of output.
 func (p *Pane) trimRawHistory() {
 	rawMax := p.scrollbackLines * 200
 	if p.hasGraphics {
@@ -43,13 +48,14 @@ func (p *Pane) trimRawHistory() {
 	if len(p.rawBuf) <= rawMax {
 		return
 	}
-	excess := len(p.rawBuf) - rawMax
+	excess := len(p.rawBuf) - rawMax*3/4
 	target := excess
 	if nl := bytes.IndexByte(p.rawBuf[excess:], '\n'); nl >= 0 {
 		target += nl + 1
 	}
 	cut := controlBoundary(p.rawBuf, target)
-	p.rawBuf = p.rawBuf[cut:]
+	n := copy(p.rawBuf, p.rawBuf[cut:])
+	p.rawBuf = p.rawBuf[:n]
 }
 
 func controlBoundary(data []byte, target int) int {

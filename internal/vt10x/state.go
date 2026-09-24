@@ -196,6 +196,7 @@ type State struct {
 	top, bottom        int // scroll limits
 	mode               ModeFlag
 	state              parseState
+	states             parserStates // bound parse functions, see st()
 	clusterOpen        bool
 	asciiReady         bool // last put printed plain ASCII in ground state; see printASCIIRun
 	noASCIIFastPath    bool // tests: force every byte through parse
@@ -228,13 +229,8 @@ type State struct {
 	links     []string
 	linkIDs   map[string]uint16
 	linkBytes int
-	// scrollRowCb, if non-nil, is called once per row that scrolls off the
-	// top of the primary screen (orig == 0 in scrollUp).  It fires before
-	// the row's backing storage is cleared, so the content is still intact.
-	// The caller must copy any data it wants to retain after the call.
-	scrollRowCb func(row []Glyph)
-	// scrollSwapCb, if non-nil, takes ownership of each departing row and
-	// returns a same-length replacement buffer (see WithScrollSwapCallback).
+	// scrollSwapCb, if non-nil, is offered each row that scrolls off the top
+	// of the primary screen before it is cleared (see WithScrollSwapCallback).
 	scrollSwapCb func(row []Glyph) []Glyph
 	// sbClearCb, if non-nil, is called when the application requests
 	// scrollback erasure via ED 3 (CSI 3 J) or RIS (ESC c).  Scrollback
@@ -245,6 +241,29 @@ type State struct {
 	graphicsReply         func([]byte)
 	cellWidth, cellHeight int
 	graphicsRows          int // replay viewport height; zero uses the live grid
+}
+
+// parserStates holds the parser's state functions bound to one State.
+// Assigning a method value (t.state = t.st().parse) allocates a closure each time;
+// the parser changes state on every escape sequence, so they are bound once.
+type parserStates struct {
+	parse, esc, csi, test, str, strEnd, altCharset parseState
+}
+
+// st returns the bound state functions, binding them on first use.
+func (t *State) st() *parserStates {
+	if t.states.parse == nil {
+		t.states = parserStates{
+			parse:      t.parse,
+			esc:        t.parseEsc,
+			csi:        t.parseEscCSI,
+			test:       t.parseEscTest,
+			str:        t.parseEscStr,
+			strEnd:     t.parseEscStrEnd,
+			altCharset: t.parseEscAltCharset,
+		}
+	}
+	return &t.states
 }
 
 func newState(w io.Writer) *State {
@@ -938,17 +957,10 @@ func (t *State) scrollUp(orig, n int) {
 	// Fire the scroll callback before clearing the departing rows.
 	// The callback receives each row while its content is still intact.
 	// Only fire when orig == 0 — rows leaving the top of the visible screen.
-	if orig == 0 {
-		switch {
-		case t.scrollSwapCb != nil:
-			for i := 0; i < n; i++ {
-				if repl := t.scrollSwapCb([]Glyph(t.lines[i])); len(repl) == t.cols {
-					t.lines[i] = repl // cleared below
-				}
-			}
-		case t.scrollRowCb != nil:
-			for i := 0; i < n; i++ {
-				t.scrollRowCb([]Glyph(t.lines[i]))
+	if orig == 0 && t.scrollSwapCb != nil {
+		for i := 0; i < n; i++ {
+			if repl := t.scrollSwapCb([]Glyph(t.lines[i])); len(repl) == t.cols {
+				t.lines[i] = repl // cleared below
 			}
 		}
 	}

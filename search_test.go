@@ -139,7 +139,7 @@ func newSearchPane(t *testing.T, cols, rows int, content string) *Pane {
 		x:               0, y: 0, w: cols + 1, h: rows,
 		cmd: &exec.Cmd{},
 	}
-	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 	p.mu.Lock()
 	p.rawBuf = []byte(content)
 	p.captureAndWrite([]byte(content))

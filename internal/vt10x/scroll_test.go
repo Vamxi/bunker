@@ -14,9 +14,12 @@ package vt10x
 
 import "testing"
 
-// newTestTermWithCb builds a terminal with a scroll callback installed.
+// newTestTermWithCb builds a terminal with a scroll callback installed. The
+// swap callback returns nil, so the terminal keeps (and clears) its row and
+// cb sees exactly what a copying consumer would.
 func newTestTermWithCb(cols, rows int, cb func(row []Glyph)) *terminal {
-	return newTerminal(TerminalInfo{cols: cols, rows: rows, scrollCb: cb})
+	swap := func(row []Glyph) []Glyph { cb(row); return nil }
+	return newTerminal(TerminalInfo{cols: cols, rows: rows, scrollSwapCb: swap})
 }
 
 // collectRow copies a callback row and appends it to a slice.

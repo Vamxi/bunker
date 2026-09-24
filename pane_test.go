@@ -1004,12 +1004,11 @@ func TestCaptureAndWrite_InPlaceOverwrite_NoSentinelPush(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Native scroll callback integration — pane.onScrollRow
+// Native scroll callback integration — pane.onScrollSwap
 //
-// These tests verify the end-to-end path: vt10x fires the scroll callback →
-// onScrollRow pushes the row into p.sb.  They require onScrollRow to exist
-// (compile-fails until implemented) and fail at runtime if the wrong number
-// of rows end up in p.sb.
+// These tests verify the end-to-end path NewPane installs: vt10x fires the
+// scroll callback → onScrollSwap moves the row into p.sb. They fail if the
+// wrong number of rows end up in p.sb.
 // ---------------------------------------------------------------------------
 
 // TestCaptureAndWrite_NativeCallback_NormalScroll creates a pane with the
@@ -1021,7 +1020,7 @@ func TestCaptureAndWrite_NativeCallback_NormalScroll(t *testing.T) {
 		scrollbackLines: 100,
 		sb:              sbRing{maxLines: 100},
 	}
-	term := vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	term := vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 	p.term = term
 
 	// Write 5 rows into a 3-row terminal → 2 rows scroll off the top.
@@ -1052,7 +1051,7 @@ func TestCaptureAndWrite_NativeCallback_InPlaceNoScrollback(t *testing.T) {
 		scrollbackLines: 100,
 		sb:              sbRing{maxLines: 100},
 	}
-	term := vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	term := vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 	p.term = term
 
 	// Fill the screen without scrolling.
@@ -1082,7 +1081,7 @@ func TestCaptureAndWrite_NativeCallback_AltScreenNoScrollback(t *testing.T) {
 		scrollbackLines: 100,
 		sb:              sbRing{maxLines: 100},
 	}
-	term := vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	term := vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 	p.term = term
 
 	// Enter alt-screen, scroll heavily, exit.
@@ -1377,7 +1376,7 @@ func TestResizeAndReflow_ContentAnchorWiden(t *testing.T) {
 	rawBuf := []byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\nFFFFFFFFFF\r\nGGGGGGGGGG\r\n")
 
 	p := &Pane{scrollbackLines: 200, sb: sbRing{maxLines: 200}}
-	p.term = vt10x.New(vt10x.WithSize(narrowCols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.term = vt10x.New(vt10x.WithSize(narrowCols, rows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 
 	// Feed the content so the scroll callback populates the ring with real rows.
 	p.mu.Lock()
@@ -1426,7 +1425,7 @@ func TestResizeHeightOnly_GrowPreservesScrollOffset(t *testing.T) {
 	const cols, oldRows, newRows = 10, 4, 7
 	// pull = extra = 3; scrollback needs ≥ 3 rows.
 	p := &Pane{scrollbackLines: 100, sb: sbRing{maxLines: 100}}
-	p.term = vt10x.New(vt10x.WithSize(cols, oldRows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.term = vt10x.New(vt10x.WithSize(cols, oldRows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 	for i := 0; i < 5; i++ {
 		row := make([]vt10x.Glyph, cols)
 		row[0] = vt10x.Glyph{Char: rune('A' + i)}
@@ -1451,7 +1450,7 @@ func TestResizeHeightOnly_GrowClampsScrollOffsetToZero(t *testing.T) {
 	const cols, oldRows, newRows = 10, 4, 10
 	// extra = 6, but only 2 rows in scrollback → pull = 2.
 	p := &Pane{scrollbackLines: 100, sb: sbRing{maxLines: 100}}
-	p.term = vt10x.New(vt10x.WithSize(cols, oldRows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.term = vt10x.New(vt10x.WithSize(cols, oldRows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 	for i := 0; i < 2; i++ {
 		row := make([]vt10x.Glyph, cols)
 		p.sb.push(row)
@@ -1474,7 +1473,7 @@ func TestResizeHeightOnly_ShrinkPreservesScrollOffset(t *testing.T) {
 	const cols, oldRows, newRows = 10, 8, 5
 	// 6 content rows; excess = 6 - 5 = 1.
 	p := &Pane{scrollbackLines: 100, sb: sbRing{maxLines: 100}}
-	p.term = vt10x.New(vt10x.WithSize(cols, oldRows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.term = vt10x.New(vt10x.WithSize(cols, oldRows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 	// Write 6 lines of content so findContentRows returns 6.
 	p.mu.Lock()
 	p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\nFFFFFFFFFF"))
@@ -1503,7 +1502,7 @@ func TestResizeHeightOnly_ShrinkPreservesScrollOffset(t *testing.T) {
 func TestResizeHeightOnly_ShrinkLiveViewStaysLive(t *testing.T) {
 	const cols, oldRows, newRows = 10, 8, 5
 	p := &Pane{scrollbackLines: 100, sb: sbRing{maxLines: 100}}
-	p.term = vt10x.New(vt10x.WithSize(cols, oldRows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.term = vt10x.New(vt10x.WithSize(cols, oldRows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 	p.mu.Lock()
 	p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\nFFFFFFFFFF"))
 	p.sbOff = 0
@@ -1517,7 +1516,7 @@ func TestResizeHeightOnly_ShrinkLiveViewStaysLive(t *testing.T) {
 
 //
 // Bug: resizeAndReflow and resizeHeightOnly replaced p.term with a new
-// terminal that lacked WithScrollCallback, so no further scrollback was
+// terminal that lacked the scroll callback, so no further scrollback was
 // captured after the first resize.
 // ---------------------------------------------------------------------------
 
@@ -1529,7 +1528,7 @@ func TestScrollCallback_PreservedAfterResize(t *testing.T) {
 		scrollbackLines: 100,
 		sb:              sbRing{maxLines: 100},
 	}
-	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 
 	// Trigger one scroll so p.sb has at least 1 row.
 	p.mu.Lock()
@@ -1563,7 +1562,7 @@ func TestScrollCallback_PreservedAfterHeightResize(t *testing.T) {
 		scrollbackLines: 100,
 		sb:              sbRing{maxLines: 100},
 	}
-	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 
 	// rawBuf required by resizeHeightOnly's path detection.
 	p.rawBuf = []byte("AAAAAA\r\nBBBBBB\r\n")
@@ -2041,7 +2040,7 @@ func newScrollbackClearPane(cols, rows int) *Pane {
 		sb:              sbRing{maxLines: 100},
 	}
 	p.term = vt10x.New(vt10x.WithSize(cols, rows),
-		vt10x.WithScrollCallback(p.onScrollRow),
+		vt10x.WithScrollSwapCallback(p.onScrollSwap),
 		vt10x.WithScrollbackClearCallback(p.onScrollbackClear))
 	return p
 }

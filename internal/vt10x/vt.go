@@ -104,14 +104,9 @@ type TerminalOption func(*TerminalInfo)
 type TerminalInfo struct {
 	w          io.Writer
 	cols, rows int
-	// scrollCb is called synchronously inside scrollUp() for each row that
-	// leaves the top of the primary screen (orig == 0), before that row's
-	// backing storage is cleared.  The slice is only valid for the duration
-	// of the call; the receiver must copy any content it wants to retain.
-	scrollCb func(row []Glyph)
-
-	// scrollSwapCb, when set, replaces scrollCb: it takes ownership of the
-	// departing row and returns a buffer of the same length to reuse.
+	// scrollSwapCb is called synchronously inside scrollUp() for each row
+	// that leaves the top of the primary screen (orig == 0), before the row
+	// is cleared; see WithScrollSwapCallback.
 	scrollSwapCb func(row []Glyph) []Glyph
 	// sbClearCb is called when the application requests scrollback erasure:
 	// ED 3 (CSI 3 J, the xterm E3 extension sent by clear(1)) or RIS
@@ -160,20 +155,13 @@ func WithSize(cols, rows int) TerminalOption {
 	}
 }
 
-// WithScrollCallback installs a callback that fires once per row scrolled off
-// the top of the primary screen.  The callback runs synchronously inside
-// terminal mutation code; it must be fast and non-blocking.  The row slice
-// is only valid for the duration of the call.
-func WithScrollCallback(fn func(row []Glyph)) TerminalOption {
-	return func(info *TerminalInfo) {
-		info.scrollCb = fn
-	}
-}
-
-// WithScrollSwapCallback is WithScrollCallback without the copy: the callback
-// takes ownership of the departing row slice and returns a replacement of
-// the same length (contents are overwritten), typically the slot it evicted.
-// Returning nil keeps the row in the terminal, as with WithScrollCallback.
+// WithScrollSwapCallback installs a callback that fires once per row
+// scrolled off the top of the primary screen, synchronously inside terminal
+// mutation code (it must be fast and non-blocking). It may take ownership of
+// the row slice by returning a replacement of the same length, whose
+// contents are overwritten (typically the scrollback slot it evicted); that
+// avoids copying every row. Returning nil leaves the row with the terminal,
+// valid only for the duration of the call.
 func WithScrollSwapCallback(fn func(row []Glyph) []Glyph) TerminalOption {
 	return func(info *TerminalInfo) {
 		info.scrollSwapCb = fn

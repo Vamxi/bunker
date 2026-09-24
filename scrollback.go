@@ -2,13 +2,14 @@
 //
 // Architecture
 // ─────────────
-// Scrollback capture uses a native vt10x scroll callback (WithScrollCallback).
-// vt10x calls Pane.onScrollRow() synchronously inside scrollUp() for each row
-// that leaves the top of the primary screen, before that row's storage is
-// cleared.  onScrollRow pushes the row into sbRing.
+// Scrollback capture uses a native vt10x scroll callback
+// (WithScrollSwapCallback). vt10x calls Pane.onScrollSwap() synchronously
+// inside scrollUp() for each row that leaves the top of the primary screen,
+// before that row is cleared; the ring takes the row and returns its evicted
+// slot (sbRing.swapIn), so rows are never copied.
 //
 // Alternate screen (vim, htop, less in fullscreen) sets vt10x.ModeAltScreen.
-// onScrollRow checks this flag and ignores callbacks while it is set — alt-
+// onScrollSwap checks this flag and ignores callbacks while it is set — alt-
 // screen apps use absolute positioning and their scrolls must not appear in
 // primary scrollback.
 //

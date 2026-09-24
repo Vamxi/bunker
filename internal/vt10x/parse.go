@@ -87,13 +87,13 @@ func (t *State) parseEsc(c rune) {
 	if t.handleControlCodes(c) {
 		return
 	}
-	next := t.parse
+	next := t.st().parse
 	t.logRune(c)
 	switch c {
 	case '[':
-		next = t.parseEscCSI
+		next = t.st().csi
 	case '#':
-		next = t.parseEscTest
+		next = t.st().test
 	case 'P', // DCS - Device Control String
 		'_', // APC - Application Program Command
 		'^', // PM - Privacy Message
@@ -101,9 +101,9 @@ func (t *State) parseEsc(c rune) {
 		'k': // old title set compatibility
 		t.str.reset()
 		t.str.typ = c
-		next = t.parseEscStr
+		next = t.st().str
 	case '(': // set primary charset G0
-		next = t.parseEscAltCharset
+		next = t.st().altCharset
 	case ')', // set secondary charset G1 (ignored)
 		'*', // set tertiary charset G2 (ignored)
 		'+': // set quaternary charset G3 (ignored)
@@ -151,7 +151,7 @@ func (t *State) parseEscCSI(c rune) {
 	}
 	t.logRune(c)
 	if t.csi.put(byte(c)) {
-		t.state = t.parse
+		t.state = t.st().parse
 		t.handleCSI()
 	}
 }
@@ -160,15 +160,15 @@ func (t *State) parseEscStr(c rune) {
 	t.logRune(c)
 	switch c {
 	case 0x18, 0x1a:
-		t.state = t.parse
+		t.state = t.st().parse
 		t.str.reset()
 		if t.graphics != nil {
 			t.graphics.Abort()
 		}
 	case '\033':
-		t.state = t.parseEscStrEnd
+		t.state = t.st().strEnd
 	case '\a': // backwards compatiblity to xterm
-		t.state = t.parse
+		t.state = t.st().parse
 		t.handleSTR()
 	default:
 		t.str.put(c)
@@ -181,7 +181,7 @@ func (t *State) parseEscStrEnd(c rune) {
 		// embedded ESC [ must not turn corrupt image data into pane text.
 		switch c {
 		case '\\', '\a':
-			t.state = t.parse
+			t.state = t.st().parse
 			t.handleSTR()
 		case 0x18, 0x1a:
 			t.handleControlCodes(c)
@@ -190,7 +190,7 @@ func (t *State) parseEscStrEnd(c rune) {
 		default:
 			t.str.put('\x1b')
 			t.str.put(c)
-			t.state = t.parseEscStr
+			t.state = t.st().str
 		}
 		return
 	}
@@ -198,7 +198,7 @@ func (t *State) parseEscStrEnd(c rune) {
 		return
 	}
 	t.logRune(c)
-	t.state = t.parse
+	t.state = t.st().parse
 	if c == '\\' {
 		t.handleSTR()
 	}
@@ -222,7 +222,7 @@ func (t *State) parseEscAltCharset(c rune) {
 	default:
 		t.logf("unknown alt. charset '%c'\n", c)
 	}
-	t.state = t.parse
+	t.state = t.st().parse
 }
 
 func (t *State) parseEscTest(c rune) {
@@ -237,7 +237,7 @@ func (t *State) parseEscTest(c rune) {
 			}
 		}
 	}
-	t.state = t.parse
+	t.state = t.st().parse
 }
 
 func (t *State) handleControlCodes(c rune) bool {
@@ -266,7 +266,7 @@ func (t *State) handleControlCodes(c rune) bool {
 	// ESC
 	case 033:
 		t.csi.reset()
-		t.state = t.parseEsc
+		t.state = t.st().esc
 	// SO, SI
 	case 016, 017:
 		// different charsets not supported. apps should use the correct
@@ -275,7 +275,7 @@ func (t *State) handleControlCodes(c rune) bool {
 	case 032, 030:
 		t.csi.reset()
 		t.str.reset()
-		t.state = t.parse
+		t.state = t.st().parse
 		if t.graphics != nil {
 			t.graphics.Abort()
 		}

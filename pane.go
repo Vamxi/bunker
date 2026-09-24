@@ -58,7 +58,12 @@ type Pane struct {
 
 	ptmx     *os.File  // PTY master - write keystrokes here, read shell output here
 	ptmxOnce sync.Once // ensures PTY master fd is closed exactly once
-	cmd      *exec.Cmd // the shell process
+	// ptmxMu serialises PTY resizes (pty.Setsize reads the raw fd) with
+	// closing it; ptmxClosed tells a late resize to skip. A pane whose
+	// shell exited mid-resize otherwise raced on the fd.
+	ptmxMu     sync.Mutex
+	ptmxClosed bool
+	cmd        *exec.Cmd // the shell process
 
 	// mu serialises all access to term (both writes from readPTY and reads from
 	// the render goroutine), plus the dead flag.
@@ -238,7 +243,7 @@ func NewPane(id, x, y, w, h, scrollback, scrollbackBytes int, dir string, spawnA
 	// Ordinary device queries are answered by captureAndWrite using pane
 	// state and theme colours. Graphics acknowledgements are emitted by the
 	// decoder, independently, so requests are answered exactly once.
-	// Create the pane first so we can pass p.onScrollRow as the scroll
+	// Create the pane first so we can pass p.onScrollSwap as the scroll
 	// callback.  p.term is set immediately after; the callback is only
 	// invoked from readPTY (started below), so p.term is always valid
 	// by the time the callback could fire.
@@ -485,26 +490,6 @@ func isInPlaceLineUpdate(chunk []byte) bool {
 		!bytes.ContainsAny(chunk, "\n\x1b")
 }
 
-// onScrollRow is the vt10x scroll callback installed in NewPane via
-// WithScrollCallback.  It is called synchronously inside vt10x.Write()
-// for each row that scrolls off the top of the primary screen (orig == 0
-// in vt10x.scrollUp), before that row's backing storage is cleared.
-//
-// The pane lock (p.mu) is already held by captureAndWrite, which is the
-// only caller of term.Write under that lock; no additional locking is needed.
-//
-// Alt-screen scrolls must be ignored: TUI apps (vim, htop, less) use the
-// alt-screen and their scroll events must not populate primary scrollback.
-func (p *Pane) onScrollRow(row []vt10x.Glyph) {
-	if p.term.Mode()&vt10x.ModeAltScreen != 0 {
-		return
-	}
-	oldCount := p.sb.count
-	oldSbOff := p.sbOff
-	p.sb.push(row)
-	p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
-}
-
 // glyphBytes is the in-memory size of one scrollback cell.
 const glyphBytes = int(unsafe.Sizeof(vt10x.Glyph{}))
 
@@ -519,9 +504,13 @@ func (p *Pane) sbCapacity(cols int) int {
 	return lines
 }
 
-// onScrollSwap is onScrollRow without the row copy: the ring keeps the
-// departing row and hands vt10x back the slot it evicted. Installed in
-// NewPane; scroll-heavy output spent most of its time copying rows.
+// onScrollSwap is the vt10x scroll callback installed in NewPane. vt10x
+// calls it inside Write (p.mu already held by captureAndWrite) for each row
+// that scrolls off the top of the primary screen. The ring keeps the row and
+// hands vt10x back the slot it evicted, so no row is copied.
+//
+// Alt-screen scrolls must be ignored: TUI apps (vim, htop, less) use the
+// alt-screen and their scroll events must not populate primary scrollback.
 func (p *Pane) onScrollSwap(row []vt10x.Glyph) []vt10x.Glyph {
 	if p.term.Mode()&vt10x.ModeAltScreen != 0 {
 		return nil
@@ -540,7 +529,7 @@ func (p *Pane) onScrollSwap(row []vt10x.Glyph) []vt10x.Glyph {
 // vt10x.Write() when the application requests scrollback erasure: ED 3
 // (CSI 3 J, sent by clear(1) via the xterm E3 capability) or RIS (ESC c,
 // sent by reset(1)).  p.mu is already held by captureAndWrite, same as
-// onScrollRow.
+// onScrollSwap.
 //
 // Besides emptying the ring, rawBuf is cut just past the erase sequence so
 // a later resize/reflow replay cannot resurrect the erased history.  The
@@ -568,7 +557,7 @@ func (p *Pane) onScrollbackClear() {
 
 // captureAndWrite writes chunk to vt10x and answers terminal capability
 // queries against the terminal state that exists at that byte offset in the
-// stream.  Scrollback capture is handled by the onScrollRow callback installed
+// stream.  Scrollback capture is handled by the onScrollSwap callback installed
 // at pane creation — vt10x calls it directly when rows scroll off the top, so
 // no post-write diffing is required here.
 //
@@ -1012,7 +1001,7 @@ func (p *Pane) writeInput(data []byte) {
 
 // scrollUp scrolls the view n lines toward the past (increases sbOff).
 // Clamped so sbOff never exceeds the number of captured lines.
-// p.sb is populated in real time by onScrollRow; no rebuild is needed here.
+// p.sb is populated in real time by onScrollSwap; no rebuild is needed here.
 func (p *Pane) scrollUp(n int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -1082,9 +1071,7 @@ func (p *Pane) resize(x, y, w, h int) {
 	p.resizeAndReflow(w-1, h)
 	cw, ch := p.term.CellPixels()
 	p.mu.Unlock()
-	if p.ptmx != nil {
-		pty.Setsize(p.ptmx, paneWinsize(w-1, h, cw, ch)) //nolint:errcheck
-	}
+	p.setPTYSize(paneWinsize(w-1, h, cw, ch))
 }
 
 // markFullRepaint forces the next renderPane call to repaint every row of
@@ -1113,9 +1100,7 @@ func (p *Pane) resizePTYOnly(x, y, w, h int) {
 	}
 	cw, ch := p.term.CellPixels()
 	p.mu.Unlock()
-	if p.ptmx != nil {
-		pty.Setsize(p.ptmx, paneWinsize(w-1, h, cw, ch)) //nolint:errcheck
-	}
+	p.setPTYSize(paneWinsize(w-1, h, cw, ch))
 }
 
 // resizeAndReflow resizes the pane terminal to (newCols × newRows).
@@ -1524,7 +1509,21 @@ func (p *Pane) cwd() string {
 // closePTX closes the PTY master exactly once.  Closing the master causes the
 // kernel to send HUP to the shell's controlling terminal.
 func (p *Pane) closePTX() {
-	p.ptmxOnce.Do(func() { p.ptmx.Close() }) //nolint:errcheck // PTY master close on shutdown
+	p.ptmxOnce.Do(func() {
+		p.ptmxMu.Lock()
+		p.ptmxClosed = true
+		p.ptmxMu.Unlock()
+		p.ptmx.Close() //nolint:errcheck // PTY master close on shutdown
+	})
+}
+
+// setPTYSize resizes the PTY unless it is already closed.
+func (p *Pane) setPTYSize(ws *pty.Winsize) {
+	p.ptmxMu.Lock()
+	defer p.ptmxMu.Unlock()
+	if p.ptmx != nil && !p.ptmxClosed {
+		pty.Setsize(p.ptmx, ws) //nolint:errcheck
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -1616,7 +1616,7 @@ func TestRenderPane_DirtyOnlyRepaintsChangedRow(t *testing.T) {
 		x:               0, y: 0, w: cols, h: rows,
 		cmd: &exec.Cmd{},
 	}
-	p.term = vt10x.New(vt10x.WithSize(termCols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.term = vt10x.New(vt10x.WithSize(termCols, rows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 
 	scr := tcell.NewSimulationScreen("UTF-8")
 	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
@@ -1709,7 +1709,7 @@ func TestRenderPane_FullRepaintOnScrollChange(t *testing.T) {
 		x:               0, y: 0, w: cols, h: rows,
 		cmd: &exec.Cmd{},
 	}
-	p.term = vt10x.New(vt10x.WithSize(cols-1, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.term = vt10x.New(vt10x.WithSize(cols-1, rows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 
 	scr := tcell.NewSimulationScreen("UTF-8")
 	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
@@ -1767,7 +1767,7 @@ func TestRenderPane_FullRepaintOnStatusOverlayChange(t *testing.T) {
 		h:               rows,
 		cmd:             &exec.Cmd{},
 	}
-	p.term = vt10x.New(vt10x.WithSize(cols-1, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.term = vt10x.New(vt10x.WithSize(cols-1, rows), vt10x.WithScrollSwapCallback(p.onScrollSwap))
 
 	scr := tcell.NewSimulationScreen("UTF-8")
 	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests

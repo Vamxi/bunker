@@ -17,7 +17,7 @@ import (
 
 func regressionPane(cols, rows int) *Pane {
 	p := &Pane{cmd: &exec.Cmd{}, w: cols + 1, h: rows, scrollbackLines: 1000, sb: sbRing{maxLines: 1000}}
-	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow), vt10x.WithScrollbackClearCallback(p.onScrollbackClear))
+	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollSwapCallback(p.onScrollSwap), vt10x.WithScrollbackClearCallback(p.onScrollbackClear))
 	return p
 }
 

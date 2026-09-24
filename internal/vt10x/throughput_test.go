@@ -5,27 +5,9 @@ import (
 	"strconv"
 	"testing"
 	"unicode/utf8"
+
+	"bunker/internal/benchdata"
 )
-
-// seqOutput mimics `seq 1 n`: short ASCII lines that scroll constantly.
-func seqOutput(n int) []byte {
-	var b bytes.Buffer
-	for i := 1; i <= n; i++ {
-		b.WriteString(strconv.Itoa(i))
-		b.WriteString("\r\n")
-	}
-	return b.Bytes()
-}
-
-// proseOutput is long wrapped ASCII lines with some SGR colour changes.
-func proseOutput(n int) []byte {
-	var b bytes.Buffer
-	for i := 0; i < n; i++ {
-		b.WriteString("\x1b[32mINFO\x1b[0m the quick brown fox jumps over the lazy dog; ")
-		b.WriteString("pack my box with five dozen liquor jugs 0123456789\r\n")
-	}
-	return b.Bytes()
-}
 
 func benchWrite(b *testing.B, data []byte) {
 	// Ring-buffer scrollback, like the pane's sbRing, so only the emulator
@@ -49,8 +31,22 @@ func benchWrite(b *testing.B, data []byte) {
 	}
 }
 
-func BenchmarkWriteSeq(b *testing.B)   { benchWrite(b, seqOutput(200_000)) }
-func BenchmarkWriteProse(b *testing.B) { benchWrite(b, proseOutput(20_000)) }
+// BenchmarkWrite measures the emulator alone on each benchdata workload,
+// with a ring-buffer scrollback consumer like the pane's.
+func BenchmarkWrite(b *testing.B) {
+	for _, w := range []struct {
+		name string
+		data []byte
+	}{
+		{"seq", benchdata.Seq(200_000)},
+		{"prose", benchdata.Prose(20_000)},
+		{"colors", benchdata.Colors(5_000)},
+		{"unicode", benchdata.Unicode(10_000)},
+		{"tui", benchdata.TUI(60, 120, 40)},
+	} {
+		b.Run(w.name, func(b *testing.B) { benchWrite(b, w.data) })
+	}
+}
 
 // TestScrollRegionRotation covers rotateLines through DECSTBM regions,
 // multi-line SU/SD (including more rows than the small inline buffer), and
@@ -88,7 +84,7 @@ func TestASCIIFastPathMatchesParser(t *testing.T) {
 		"a", "hello world ", "0123456789", "~!@#$%^&*()", " ", "\r\n", "\n", "\r", "\t", "\b",
 		"\x1b[31m", "\x1b[1;4;44m", "\x1b[0m", "\x1b[7m", "\x1b[2J", "\x1b[H", "\x1b[3;5H", "\x1b[K",
 		"\x1b[?7l", "\x1b[?7h", "\x1b(0", "\x1b(B", "\x1b[4h", "\x1b[4l", "\x1b[2;4r", "\x1b[r",
-		"é", "é", "日本", "😀", "👍🏽", "‍", "️", "1️⃣", "؀", "\xff",
+		"é", "e\u0301", "日本", "😀", "👍🏽", "\u200d", "\ufe0f", "1\ufe0f\u20e3", "\u0600", "\xff",
 	}
 	rng := uint64(1)
 	next := func(n int) int {
@@ -138,4 +134,38 @@ func sameGlyph(a, b Glyph) bool {
 	}
 	a.ext, b.ext = nil, nil
 	return a == b
+}
+
+// TestWriteDoesNotAllocate guards the emulator's steady state: ASCII, colour
+// changes, and cursor-addressed redraws must not allocate per byte, escape
+// sequence, or line.
+func TestWriteDoesNotAllocate(t *testing.T) {
+	for _, w := range []struct {
+		name string
+		data []byte
+	}{
+		{"prose", benchdata.Prose(200)},
+		{"colors", benchdata.Colors(50)},
+		{"tui", benchdata.TUI(1, 120, 40)},
+	} {
+		t.Run(w.name, func(t *testing.T) {
+			ring := make([][]Glyph, 64)
+			head := 0
+			term := New(WithSize(120, 40), WithScrollSwapCallback(func(row []Glyph) []Glyph {
+				old := ring[head]
+				ring[head] = row
+				head = (head + 1) % len(ring)
+				if len(old) != len(row) {
+					return make([]Glyph, len(row))
+				}
+				return old
+			}))
+			for range 4 { // fill the ring
+				term.Write(w.data) //nolint:errcheck
+			}
+			if n := testing.AllocsPerRun(20, func() { term.Write(w.data) }); n != 0 { //nolint:errcheck
+				t.Fatalf("Write allocates %.1f times per %d bytes", n, len(w.data))
+			}
+		})
+	}
 }

@@ -17,7 +17,6 @@ type terminal struct {
 
 func newTerminal(info TerminalInfo) *terminal {
 	t := &terminal{newState(info.w)}
-	t.scrollRowCb = info.scrollCb
 	t.scrollSwapCb = info.scrollSwapCb
 	t.init(info.cols, info.rows)
 	return t
@@ -25,7 +24,7 @@ func newTerminal(info TerminalInfo) *terminal {
 
 func (t *terminal) init(cols, rows int) {
 	t.numlock = true
-	t.state = t.parse
+	t.state = t.st().parse
 	t.cur.Attr.FG = DefaultFG
 	t.cur.Attr.BG = DefaultBG
 	t.Resize(cols, rows)
