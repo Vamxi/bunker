@@ -131,12 +131,17 @@ while holding `Pane.mu`.
 
 ```bash
 make check    # full validation gate (fmt → vet → race tests → build → lint)
-make test     # tests only (race-enabled)
+make test     # tests only (race-enabled; GUI integration tests need a display)
+make test-gui # GUI integration tests only
+make bench    # benchmarks vs bench/baseline.txt
 make build    # native linux/amd64 bin/bunker (cgo + gtk4-devel)
 make run      # builds local binary and runs it with --trace
 ```
 
 Tests run with `-race` and are required to pass before any binary is built.
+**TESTING.md** lists every suite, the GUI test harness, benchmarks, and
+allocation guards; add a `TestGUI_…` for each user-visible feature. Use
+`make test` rather than a bare `go test -race` (see TESTING.md on checkptr).
 `make test` includes the locally patched tcell module and its terminfo tests.
 The gate is serialized even with `make -j`; the project-specific test-before-
 build rule takes precedence over the generic gate ordering.

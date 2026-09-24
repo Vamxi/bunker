@@ -54,6 +54,7 @@ static int bunker_screenshot(uintptr_t widget, const char *path) {
 import "C"
 
 import (
+	"errors"
 	"os"
 	"runtime/pprof"
 	"strings"
@@ -76,22 +77,19 @@ func guiScheduleScreenshot(main *gtk.ApplicationWindow, target func() gtk.Widget
 	if d, err := time.ParseDuration(os.Getenv("BUNKER_SCREENSHOT_DELAY")); err == nil {
 		delay = d
 	}
-	cpath := C.CString(path) // freed after the last attempt
 	attempts := 0
-	// attempt returns true to be retried: step 1 means GTK has no frame for
-	// the window yet.
+	// attempt returns true to be retried while GTK has no frame yet.
 	attempt := func() bool {
-		win := gtk.BaseWidget(target())
-		code := C.bunker_screenshot(C.uintptr_t(coreglib.InternObject(win).Native()), cpath)
-		if code == 1 && attempts < 20 {
+		win := target()
+		err := guiRenderPNG(win, path)
+		if errors.Is(err, errNoFrame) && attempts < 20 {
 			attempts++
-			win.QueueDraw()
+			gtk.BaseWidget(win).QueueDraw()
 			return true
 		}
-		if code != 0 {
-			L.Error("screenshot: failed", "path", path, "step", int(code))
+		if err != nil {
+			L.Error("screenshot: failed", "path", path, "err", err)
 		}
-		C.free(unsafe.Pointer(cpath))
 		main.Close()
 		return false
 	}
@@ -101,6 +99,28 @@ func guiScheduleScreenshot(main *gtk.ApplicationWindow, target func() gtk.Widget
 		}
 		return false
 	})
+}
+
+// errNoFrame means the widget has not been drawn yet.
+var errNoFrame = errors.New("no frame yet")
+
+// guiRenderPNG renders widget w (and its children) through its own GSK
+// renderer into a PNG at path. Used by BUNKER_SCREENSHOT and the GUI tests.
+func guiRenderPNG(w gtk.Widgetter, path string) error {
+	cpath := C.CString(path)
+	defer C.free(unsafe.Pointer(cpath))
+	switch C.bunker_screenshot(C.uintptr_t(coreglib.BaseObject(w).Native()), cpath) {
+	case 0:
+		return nil
+	case 1:
+		return errNoFrame
+	case 2:
+		return errors.New("no renderer")
+	case 3:
+		return errors.New("render failed")
+	default:
+		return errors.New("saving PNG failed")
+	}
 }
 
 func guiStartProfile() func() {
@@ -156,4 +176,56 @@ func (gw *guiWin) runDebugKeys() {
 		}
 		return true
 	})
+}
+
+// runDebugHooks starts whatever BUNKER_TABS, BUNKER_OPEN, BUNKER_KEYS, and
+// BUNKER_SCREENSHOT ask for (see the top of this file). Nothing runs when
+// they are unset.
+func (gw *guiWin) runDebugHooks() {
+	// Extra tabs open once the first tab has a size.
+	if extras := guiDebugExtraTabs(); len(extras) > 0 {
+		coreglib.TimeoutAdd(300, func() bool {
+			for _, extra := range extras {
+				gw.newTab("", extra)
+			}
+			return false
+		})
+	}
+	open := os.Getenv("BUNKER_OPEN")
+	switch {
+	case strings.HasPrefix(open, "preferences"):
+		gw.openSettings()
+		if _, page, ok := strings.Cut(open, "/"); ok {
+			gw.settings.stack.SetVisibleChildName(page)
+		}
+	case open == "tab-menu":
+		coreglib.TimeoutAdd(800, func() bool {
+			if gw.active != nil {
+				gw.active.showMenu(40, 12)
+			}
+			return false
+		})
+	case open == "tab-rename": // choose Rename… the way a click does: hide, then activate
+		coreglib.TimeoutAdd(800, func() bool {
+			if t := gw.active; t != nil {
+				t.showMenu(40, 12)
+				coreglib.TimeoutAdd(200, func() bool {
+					t.menu.Popdown()
+					t.row.ActivateAction("tab.rename", nil)
+					return false
+				})
+			}
+			return false
+		})
+	}
+	guiScheduleScreenshot(gw.win, func() gtk.Widgetter {
+		if gw.settings != nil && gw.settings.win.IsVisible() {
+			return gw.settings.win
+		}
+		if gw.active != nil && gw.active.menu != nil && gw.active.menu.IsVisible() {
+			return gw.active.menu
+		}
+		return gw.win
+	})
+	gw.runDebugKeys()
 }

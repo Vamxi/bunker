@@ -132,6 +132,9 @@ builds are cached. `third_party/gotk4` carries two fixes to gotk4's subclass
 support (see `BUNKER_PATCHES.md` there); `third_party/tcell` is bunk's
 patched tcell.
 
+Tests, benchmarks, and regression guards are described in
+[TESTING.md](TESTING.md).
+
 Debug helpers: `--debug` / `--trace` log to `/tmp/bunk.log`;
 `BUNKER_SCREENSHOT=out.png` renders the window to a PNG through GSK and
 exits; `BUNKER_CPUPROFILE=cpu.prof` writes a CPU profile.

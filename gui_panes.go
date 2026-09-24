@@ -465,6 +465,6 @@ func (v *termView) drawSearchBar(s *gtk.Snapshot, f *paneFrame, query string, id
 }
 
 func (v *termView) pushRoundedClip(s *gtk.Snapshot, x, y, w, h, r float64) {
-	C.bunker_push_rounded_clip(C.uintptr_t(coreglib.InternObject(s).Native()),
+	C.bunker_push_rounded_clip(C.uintptr_t(coreglib.BaseObject(s).Native()),
 		C.float(x), C.float(y), C.float(w), C.float(h), C.float(r))
 }

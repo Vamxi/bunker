@@ -1,0 +1,105 @@
+goos: linux
+goarch: amd64
+pkg: bunker
+cpu: Intel(R) Core(TM) Ultra X7 358H
+BenchmarkPaneWrite/seq-16   	      16	  67297488 ns/op	  22.12 MB/s	 3274129 B/op	     629 allocs/op
+BenchmarkPaneWrite/seq-16   	      16	  68902739 ns/op	  21.61 MB/s	 3271693 B/op	     626 allocs/op
+BenchmarkPaneWrite/seq-16   	      16	  68099428 ns/op	  21.86 MB/s	 3271688 B/op	     626 allocs/op
+BenchmarkPaneWrite/seq-16   	      16	  67530279 ns/op	  22.05 MB/s	 3271694 B/op	     626 allocs/op
+BenchmarkPaneWrite/seq-16   	      16	  67544078 ns/op	  22.04 MB/s	 3271680 B/op	     626 allocs/op
+BenchmarkPaneWrite/seq-16   	      16	  67735641 ns/op	  21.98 MB/s	 3271687 B/op	     626 allocs/op
+BenchmarkPaneWrite/prose-16 	      46	  25226467 ns/op	  88.00 MB/s	 1138100 B/op	     218 allocs/op
+BenchmarkPaneWrite/prose-16 	      45	  25186977 ns/op	  88.14 MB/s	 1163265 B/op	     222 allocs/op
+BenchmarkPaneWrite/prose-16 	      46	  25006598 ns/op	  88.78 MB/s	 1137979 B/op	     217 allocs/op
+BenchmarkPaneWrite/prose-16 	      45	  25888501 ns/op	  85.75 MB/s	 1163264 B/op	     222 allocs/op
+BenchmarkPaneWrite/prose-16 	      48	  24513176 ns/op	  90.56 MB/s	 1090561 B/op	     208 allocs/op
+BenchmarkPaneWrite/prose-16 	      46	  24841653 ns/op	  89.37 MB/s	 1137976 B/op	     217 allocs/op
+BenchmarkPaneWrite/colors-16         	      19	  57886242 ns/op	  76.57 MB/s	 2755109 B/op	     527 allocs/op
+BenchmarkPaneWrite/colors-16         	      18	  58133132 ns/op	  76.24 MB/s	 2908179 B/op	     557 allocs/op
+BenchmarkPaneWrite/colors-16         	      19	  58547106 ns/op	  75.71 MB/s	 2755108 B/op	     527 allocs/op
+BenchmarkPaneWrite/colors-16         	      20	  57925674 ns/op	  76.52 MB/s	 2617354 B/op	     501 allocs/op
+BenchmarkPaneWrite/colors-16         	      19	  58092717 ns/op	  76.30 MB/s	 2755108 B/op	     527 allocs/op
+BenchmarkPaneWrite/colors-16         	      19	  59463825 ns/op	  74.54 MB/s	 2755108 B/op	     527 allocs/op
+BenchmarkPaneWrite/unicode-16        	      26	  43222660 ns/op	  23.60 MB/s	 4013118 B/op	  140373 allocs/op
+BenchmarkPaneWrite/unicode-16        	      27	  42271009 ns/op	  24.13 MB/s	 3938551 B/op	  140359 allocs/op
+BenchmarkPaneWrite/unicode-16        	      26	  43832502 ns/op	  23.27 MB/s	 4013118 B/op	  140373 allocs/op
+BenchmarkPaneWrite/unicode-16        	      27	  42114705 ns/op	  24.22 MB/s	 3938552 B/op	  140359 allocs/op
+BenchmarkPaneWrite/unicode-16        	      27	  41546970 ns/op	  24.55 MB/s	 3938556 B/op	  140359 allocs/op
+BenchmarkPaneWrite/unicode-16        	      28	  41808637 ns/op	  24.40 MB/s	 3869309 B/op	  140345 allocs/op
+BenchmarkPaneWrite/tui-16            	      30	  39374268 ns/op	  31.28 MB/s	  371373 B/op	       0 allocs/op
+BenchmarkPaneWrite/tui-16            	      28	  39955558 ns/op	  30.83 MB/s	  397900 B/op	       0 allocs/op
+BenchmarkPaneWrite/tui-16            	      30	  39422216 ns/op	  31.25 MB/s	  371373 B/op	       0 allocs/op
+BenchmarkPaneWrite/tui-16            	      28	  39971659 ns/op	  30.82 MB/s	  397900 B/op	       0 allocs/op
+BenchmarkPaneWrite/tui-16            	      30	  39109982 ns/op	  31.50 MB/s	  371373 B/op	       0 allocs/op
+BenchmarkPaneWrite/tui-16            	      28	  40070102 ns/op	  30.74 MB/s	  397904 B/op	       0 allocs/op
+BenchmarkReflow-16                   	      18	  63693672 ns/op	115383629 B/op	   34786 allocs/op
+BenchmarkReflow-16                   	      18	  64021920 ns/op	115383305 B/op	   34786 allocs/op
+BenchmarkReflow-16                   	      18	  66151012 ns/op	115383333 B/op	   34786 allocs/op
+BenchmarkReflow-16                   	      19	  66058305 ns/op	115055865 B/op	   35069 allocs/op
+BenchmarkReflow-16                   	      16	  65960234 ns/op	115383295 B/op	   34786 allocs/op
+BenchmarkReflow-16                   	      18	  64668567 ns/op	115383336 B/op	   34786 allocs/op
+BenchmarkSearch-16                   	      87	  13642574 ns/op	28762350 B/op	   40151 allocs/op
+BenchmarkSearch-16                   	      88	  13315290 ns/op	28762352 B/op	   40151 allocs/op
+BenchmarkSearch-16                   	      75	  13645921 ns/op	28762352 B/op	   40151 allocs/op
+BenchmarkSearch-16                   	      87	  13615761 ns/op	28762355 B/op	   40151 allocs/op
+BenchmarkSearch-16                   	      86	  13816750 ns/op	28762351 B/op	   40151 allocs/op
+BenchmarkSearch-16                   	      87	  13577848 ns/op	28762352 B/op	   40151 allocs/op
+BenchmarkFrameCapture-16             	    7959	    150850 ns/op	      49 B/op	       0 allocs/op
+BenchmarkFrameCapture-16             	    8052	    149255 ns/op	      49 B/op	       0 allocs/op
+BenchmarkFrameCapture-16             	    7822	    151143 ns/op	      50 B/op	       0 allocs/op
+BenchmarkFrameCapture-16             	    7796	    153594 ns/op	      50 B/op	       0 allocs/op
+BenchmarkFrameCapture-16             	    7982	    150471 ns/op	      49 B/op	       0 allocs/op
+BenchmarkFrameCapture-16             	    7977	    150305 ns/op	      49 B/op	       0 allocs/op
+BenchmarkTOMLEdit-16                 	  425064	      2843 ns/op	    5568 B/op	       3 allocs/op
+BenchmarkTOMLEdit-16                 	  429985	      2840 ns/op	    5568 B/op	       3 allocs/op
+BenchmarkTOMLEdit-16                 	  409656	      2876 ns/op	    5568 B/op	       3 allocs/op
+BenchmarkTOMLEdit-16                 	  435104	      2847 ns/op	    5568 B/op	       3 allocs/op
+BenchmarkTOMLEdit-16                 	  417675	      2830 ns/op	    5568 B/op	       3 allocs/op
+BenchmarkTOMLEdit-16                 	  435110	      2802 ns/op	    5568 B/op	       3 allocs/op
+BenchmarkGUIFrame-16                 	     313	   3576908 ns/op	  216052 B/op	   24032 allocs/op
+BenchmarkGUIFrame-16                 	     380	   3179138 ns/op	  215655 B/op	   23991 allocs/op
+BenchmarkGUIFrame-16                 	     381	   3188442 ns/op	  215620 B/op	   23991 allocs/op
+BenchmarkGUIFrame-16                 	     366	   3222964 ns/op	  215717 B/op	   23999 allocs/op
+BenchmarkGUIFrame-16                 	     337	   3307442 ns/op	  215856 B/op	   24015 allocs/op
+BenchmarkGUIFrame-16                 	     342	   3316600 ns/op	  215839 B/op	   24012 allocs/op
+PASS
+ok  	bunker	71.913s
+?   	bunker/internal/benchdata	[no test files]
+PASS
+ok  	bunker/internal/graphics	0.002s
+goos: linux
+goarch: amd64
+pkg: bunker/internal/vt10x
+cpu: Intel(R) Core(TM) Ultra X7 358H
+BenchmarkWrite/seq-16         	      33	  35142482 ns/op	  42.37 MB/s	  124121 B/op	      30 allocs/op
+BenchmarkWrite/seq-16         	      33	  34287854 ns/op	  43.42 MB/s	  124121 B/op	      30 allocs/op
+BenchmarkWrite/seq-16         	      31	  35223761 ns/op	  42.27 MB/s	  132129 B/op	      32 allocs/op
+BenchmarkWrite/seq-16         	      33	  34880398 ns/op	  42.69 MB/s	  124121 B/op	      30 allocs/op
+BenchmarkWrite/seq-16         	      33	  34673987 ns/op	  42.94 MB/s	  124121 B/op	      30 allocs/op
+BenchmarkWrite/seq-16         	      33	  34230779 ns/op	  43.50 MB/s	  124121 B/op	      30 allocs/op
+BenchmarkWrite/prose-16       	      74	  15851302 ns/op	 140.05 MB/s	   55351 B/op	      13 allocs/op
+BenchmarkWrite/prose-16       	      76	  16282721 ns/op	 136.34 MB/s	   53894 B/op	      13 allocs/op
+BenchmarkWrite/prose-16       	      72	  16306176 ns/op	 136.14 MB/s	   56889 B/op	      13 allocs/op
+BenchmarkWrite/prose-16       	      76	  15743412 ns/op	 141.01 MB/s	   53894 B/op	      13 allocs/op
+BenchmarkWrite/prose-16       	      76	  15500697 ns/op	 143.22 MB/s	   53894 B/op	      13 allocs/op
+BenchmarkWrite/prose-16       	      75	  15726721 ns/op	 141.16 MB/s	   54613 B/op	      13 allocs/op
+BenchmarkWrite/colors-16      	      37	  32009007 ns/op	 138.47 MB/s	  110707 B/op	      27 allocs/op
+BenchmarkWrite/colors-16      	      36	  32592307 ns/op	 135.99 MB/s	  113782 B/op	      27 allocs/op
+BenchmarkWrite/colors-16      	      36	  32757504 ns/op	 135.31 MB/s	  113782 B/op	      27 allocs/op
+BenchmarkWrite/colors-16      	      36	  33113223 ns/op	 133.85 MB/s	  113782 B/op	      27 allocs/op
+BenchmarkWrite/colors-16      	      34	  33318899 ns/op	 133.03 MB/s	  120475 B/op	      29 allocs/op
+BenchmarkWrite/colors-16      	      36	  33128202 ns/op	 133.79 MB/s	  113782 B/op	      27 allocs/op
+BenchmarkWrite/unicode-16     	      30	  39577798 ns/op	  25.77 MB/s	 2136714 B/op	  140033 allocs/op
+BenchmarkWrite/unicode-16     	      32	  39019652 ns/op	  26.14 MB/s	 2128001 B/op	  140031 allocs/op
+BenchmarkWrite/unicode-16     	      31	  37653271 ns/op	  27.09 MB/s	 2132475 B/op	  140032 allocs/op
+BenchmarkWrite/unicode-16     	      31	  38590139 ns/op	  26.43 MB/s	 2132134 B/op	  140032 allocs/op
+BenchmarkWrite/unicode-16     	      32	  38385454 ns/op	  26.57 MB/s	 2128011 B/op	  140031 allocs/op
+BenchmarkWrite/unicode-16     	      28	  39368555 ns/op	  25.91 MB/s	 2146294 B/op	  140035 allocs/op
+BenchmarkWrite/tui-16         	      34	  33935370 ns/op	  36.30 MB/s	       2 B/op	       0 allocs/op
+BenchmarkWrite/tui-16         	      34	  33949716 ns/op	  36.28 MB/s	       2 B/op	       0 allocs/op
+BenchmarkWrite/tui-16         	      36	  33426804 ns/op	  36.85 MB/s	       2 B/op	       0 allocs/op
+BenchmarkWrite/tui-16         	      36	  33970335 ns/op	  36.26 MB/s	       2 B/op	       0 allocs/op
+BenchmarkWrite/tui-16         	      36	  33552076 ns/op	  36.71 MB/s	       2 B/op	       0 allocs/op
+BenchmarkWrite/tui-16         	      34	  34600716 ns/op	  35.60 MB/s	       2 B/op	       0 allocs/op
+PASS
+ok  	bunker/internal/vt10x	35.309s

@@ -1,16 +1,15 @@
 // gui_view.go - GTK4 terminal widget.
 //
-// termView is a GtkWidget subclass that paints one Pane's vt10x grid through
-// GtkSnapshot. Every cell becomes GSK colour and text render nodes, which GTK
-// rasterises on the GPU (Vulkan/GL) with its own glyph cache.
+// termView is a GtkWidget subclass that paints one tab's bunk split tree
+// through GtkSnapshot (see gui_panes.go). Every cell becomes GSK colour and
+// text render nodes, which GTK rasterises on the GPU (Vulkan/GL) with its own
+// glyph cache. This file holds fonts, sizing, and row drawing.
 //
 // Frame pipeline:
 //
 //	readPTY → app.redraw → redrawBridge → glib idle → QueueDraw
-//	GTK frame clock → snapshot(): copy visible rows under Pane.mu, release,
-//	then emit colour and text nodes row by row.
-//
-// Pane.mu is held only for the grid copy; drawing happens after release.
+//	GTK frame clock → snapshot(): copy each visible pane under its Pane.mu,
+//	release, then emit colour and text nodes row by row.
 package main
 
 import (
@@ -59,7 +58,6 @@ type termView struct {
 
 	app   *App
 	theme resolvedTheme
-	win   *gtk.ApplicationWindow
 
 	pad      float64 // pixels around the grid ([window] padding)
 	fontBase string

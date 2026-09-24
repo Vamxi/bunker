@@ -20,7 +20,6 @@ import (
 	"time"
 
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
-	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -45,7 +44,6 @@ type guiWin struct {
 	strip       *gtk.Box
 	stripScroll *gtk.ScrolledWindow
 	layout      *gtk.Box
-	themeCSS    *gtk.CSSProvider
 	sidebarBtn  *gtk.Button
 	headTitle   *gtk.Label
 	headSub     *gtk.Label
@@ -122,11 +120,7 @@ func guiConfig(cfg Config) Config {
 }
 
 func (gw *guiWin) build(command []string) {
-	guiInstallCSS()
-	gw.themeCSS = gtk.NewCSSProvider()
-	gw.themeCSS.LoadFromString(themeCSS(gw.cfg.Theme))
-	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), gw.themeCSS, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-	gw.applyDarkPreference()
+	guiApplyTheme(gw.cfg.Theme)
 
 	win := gtk.NewApplicationWindow(gw.gapp)
 	win.SetTitle("bunker")
@@ -159,58 +153,12 @@ func (gw *guiWin) build(command []string) {
 
 	gw.newTab("", command)
 	win.Present()
-	// Debug-only extra tabs open once the first tab has a size.
-	if extras := guiDebugExtraTabs(); len(extras) > 0 {
-		coreglib.TimeoutAdd(300, func() bool {
-			for _, extra := range extras {
-				gw.newTab("", extra)
-			}
-			return false
-		})
-	}
 	if gw.active != nil {
 		gw.active.view.GrabFocus()
 	}
-
-	if open := os.Getenv("BUNKER_OPEN"); strings.HasPrefix(open, "preferences") {
-		gw.openSettings()
-		if _, page, ok := strings.Cut(open, "/"); ok {
-			gw.settings.stack.SetVisibleChildName(page)
-		}
-	}
-	switch os.Getenv("BUNKER_OPEN") {
-	case "tab-menu":
-		coreglib.TimeoutAdd(800, func() bool {
-			if gw.active != nil {
-				gw.active.showMenu(40, 12)
-			}
-			return false
-		})
-	case "tab-rename": // choose Rename… the way a click does: hide, then activate
-		coreglib.TimeoutAdd(800, func() bool {
-			if t := gw.active; t != nil {
-				t.showMenu(40, 12)
-				coreglib.TimeoutAdd(200, func() bool {
-					t.menu.Popdown()
-					t.row.ActivateAction("tab.rename", nil)
-					return false
-				})
-			}
-			return false
-		})
-	}
-	guiScheduleScreenshot(win, func() gtk.Widgetter {
-		if gw.settings != nil && gw.settings.win.IsVisible() {
-			return gw.settings.win
-		}
-		if gw.active != nil && gw.active.menu != nil && gw.active.menu.IsVisible() {
-			return gw.active.menu
-		}
-		return win
-	})
+	gw.runDebugHooks()
 	gw.watchConfig()
 	gw.pollTitles()
-	gw.runDebugKeys()
 }
 
 func (gw *guiWin) headerBar() *gtk.HeaderBar {
@@ -390,8 +338,7 @@ func (gw *guiWin) apply(cfg Config) {
 		t.view.applyConfig(cfg)
 	}
 	if themeChanged {
-		gw.themeCSS.LoadFromString(themeCSS(cfg.Theme))
-		gw.applyDarkPreference()
+		guiApplyTheme(cfg.Theme)
 	}
 	gw.applyTabsLayout()
 	if gw.settings != nil {
@@ -413,13 +360,6 @@ func (gw *guiWin) setWindowTitle(info tabInfo) {
 	}
 	gw.headSub.SetText(strings.Join(sub, "  ·  "))
 	gw.headSub.SetVisible(len(sub) > 0)
-}
-
-func (gw *guiWin) applyDarkPreference() {
-	if s := gtk.SettingsGetDefault(); s != nil {
-		r, g, b := gw.cfg.Theme.bg.RGB()
-		s.SetObjectProperty("gtk-application-prefer-dark-theme", r*299+g*587+b*114 < 128_000)
-	}
 }
 
 func (gw *guiWin) openConfigFile() {
@@ -454,61 +394,6 @@ func (gw *guiWin) hideBanner() {
 	if gw.banner != nil {
 		gw.banner.SetVisible(false)
 	}
-}
-
-func guiInstallCSS() {
-	css := gtk.NewCSSProvider()
-	css.LoadFromString(`
-.bunker-banner {
-	background-color: #c01c28;
-	color: white;
-	padding: 8px 14px;
-	border-radius: 8px;
-	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-}
-.bunker-page-title {
-	font-size: 1.5em;
-	font-weight: 800;
-}
-.bunker-group-title {
-	font-weight: bold;
-	margin-bottom: 2px;
-}
-.bunker-dim {
-	opacity: 0.65;
-	font-size: 0.92em;
-}
-list.bunker-card {
-	background-color: alpha(currentColor, 0.05);
-	border: 1px solid alpha(currentColor, 0.10);
-	border-radius: 12px;
-	margin-top: 4px;
-}
-list.bunker-card > row {
-	border-bottom: 1px solid alpha(currentColor, 0.08);
-	background: none;
-}
-list.bunker-card > row:last-child {
-	border-bottom: none;
-}
-.bunker-row {
-	padding: 10px 14px;
-	min-height: 34px;
-}
-.bunker-key {
-	font-family: monospace;
-	opacity: 0.8;
-}
-.bunker-settings-error {
-	background-color: #c01c28;
-	color: white;
-	padding: 8px 14px;
-}
-.bunker-settings-sidebar {
-	padding: 8px 0;
-}
-`)
-	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), css, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 }
 
 // sleepRenderSettle lets erase-then-redraw bursts land in one frame, as the

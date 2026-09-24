@@ -10,6 +10,11 @@ LDFLAGS  = -ldflags="-X main.Version=$(VERSION)"
 
 export PATH := $(PATH):$(shell go env GOPATH)/bin
 
+# -race also enables checkptr, which rejects the uintptr→pointer conversions
+# in gotk4's generated marshallers. Keep checkptr on for bunker's own code.
+RACEFLAGS := -race -gcflags='github.com/diamondburned/gotk4/pkg/...=-d=checkptr=0'
+BENCHSTAT := go run golang.org/x/perf/cmd/benchstat@latest
+
 version:
 ifdef MONOVA
 override VERSION = $(shell monova)
@@ -18,8 +23,24 @@ else
 	$(info "Install monova with: grm install jsnjack/monova")
 endif
 
+# Everything, including the GUI integration tests when a display is
+# available (they skip otherwise). See TESTING.md.
 test:
-	go test $(PKG) github.com/gdamore/tcell/v2/... -count=1 -race
+	go test $(PKG) github.com/gdamore/tcell/v2/... -count=1 $(RACEFLAGS)
+
+# Only the GUI integration tests (needs a Wayland or X display).
+test-gui:
+	go test . -run 'TestGUI_' -count=1 -v
+
+# Benchmarks, compared with the committed baseline when there is one.
+bench:
+	mkdir -p bench
+	go test ./... -run '^$$' -bench . -benchmem -count 6 | tee bench/latest.txt
+	@if [ -f bench/baseline.txt ]; then $(BENCHSTAT) bench/baseline.txt bench/latest.txt; fi
+
+# Accept the latest results as the new baseline (commit bench/baseline.txt).
+bench-baseline:
+	cp bench/latest.txt bench/baseline.txt
 
 vet:
 	go vet $(PKG)
@@ -74,4 +95,4 @@ run: test
 clean:
 	rm -rf bin/ $(BINARY)
 
-.PHONY: version build release test vet fmt lint check standards run clean
+.PHONY: version build release test test-gui bench bench-baseline vet fmt lint check standards run clean
