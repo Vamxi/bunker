@@ -6,6 +6,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -342,4 +343,91 @@ func indexOf(tabs []*guiTab, t *guiTab) int {
 		}
 	}
 	return -1
+}
+
+// Input methods: committed text (a dead key's é, CJK) reaches the program
+// through bunk's key handling, feeds the search bar in search mode, and the
+// composition is drawn at the cursor while in progress.
+func TestGUI_IME(t *testing.T) {
+	w := newTestWin(t, "exec cat", nil)
+	p := w.panes()[0]
+	onMain(func() { w.active.view.imeCommit("é日本 ok\r") })
+	w.waitDrawn(p, "é日本 ok")
+
+	onMain(func() {
+		v := w.active.view
+		v.setPreedit("nihao", 3)
+		if v.ime.preedit != "nihao" {
+			t.Fatalf("preedit not stored")
+		}
+	})
+	settle(100 * time.Millisecond)
+	img := w.screenshot() // draws the preedit path; must not disturb the frame
+	if img.Bounds().Dx() == 0 {
+		t.Fatal("empty screenshot")
+	}
+	onMain(func() {
+		v := w.active.view
+		if v.ime.area == [4]int{} {
+			t.Errorf("cursor location never reported to the input method")
+		}
+		v.imeCommit("你好")
+		if v.ime.preedit != "" {
+			t.Errorf("commit should end the composition")
+		}
+	})
+	w.waitDrawn(p, "你好")
+
+	w.key(gdk.KEY_f, ctrl)
+	onMain(func() { w.active.view.imeCommit("ok") })
+	onMain(func() {
+		if q := w.activeApp().searchQuery; q != "ok" {
+			t.Errorf("committed text in search mode went elsewhere: query %q", q)
+		}
+	})
+}
+
+// TestGUI_WaylandIMStress opens, focuses rename entries in, and closes
+// windows and tabs quickly, in a child process so a crash is reported
+// rather than taking down the suite. Before the terminal view had its own
+// input method this crashed GTK's Wayland IM code about one run in three
+// (gtk_im_context_wayland_global_get).
+func TestGUI_WaylandIMStress(t *testing.T) {
+	needGUI(t)
+	if os.Getenv("WAYLAND_DISPLAY") == "" {
+		t.Skip("Wayland only")
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestIMStressChild$", "-test.count=1")
+	cmd.Env = append(os.Environ(), "BUNKER_IM_STRESS_CHILD=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("child crashed or failed: %v\n%s", err, tail(out, 40))
+	}
+}
+
+func TestIMStressChild(t *testing.T) {
+	if os.Getenv("BUNKER_IM_STRESS_CHILD") == "" {
+		t.Skip("run by TestGUI_WaylandIMStress")
+	}
+	for i := range 25 {
+		w := newTestWin(t, "exec sleep 30", nil)
+		w.key(gdk.KEY_T, ctrl|shift)
+		onMain(func() {
+			w.active.startRename() // focuses an entry, which uses the IM
+			w.active.view.imeCommit("x")
+		})
+		settle(20 * time.Millisecond)
+		onMain(func() {
+			w.closeTab(w.active) // destroys the focused entry
+			w.gw().win.Destroy()
+		})
+		settle(time.Duration(i%3) * 10 * time.Millisecond)
+	}
+}
+
+func (w *testWin) gw() *guiWin { return w.guiWin }
+
+func tail(b []byte, lines int) string {
+	parts := strings.Split(string(b), "\n")
+	return strings.Join(parts[max(0, len(parts)-lines):], "\n")
 }

@@ -22,6 +22,7 @@ import (
 func (v *termView) installInput() {
 	keys := gtk.NewEventControllerKey()
 	keys.ConnectKeyPressed(v.keyPressed)
+	v.installIME(keys)
 	v.AddController(keys)
 
 	focus := gtk.NewEventControllerFocus()
@@ -54,6 +55,7 @@ func (v *termView) installInput() {
 
 func (v *termView) setFocused(focused bool) {
 	v.focused = focused
+	v.imeFocus(focused)
 	v.app.mu.Lock()
 	p := v.app.active
 	v.app.mu.Unlock()

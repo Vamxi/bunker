@@ -278,7 +278,12 @@ func (v *termView) drawPane(s *gtk.Snapshot, p *Pane, f *paneFrame, isActive, is
 	v.drawSearchHighlights(s, f)
 	v.drawSelection(s, f)
 	if isActive {
-		v.drawCursor(s, f)
+		if v.ime.preedit != "" {
+			v.drawPreeditAtCursor(s, f)
+		} else {
+			v.drawCursor(s, f)
+		}
+		v.reportCursor(f)
 	}
 	v.drawScrollbar(s, f)
 	s.Pop()
@@ -379,6 +384,23 @@ func (v *termView) drawCursor(s *gtk.Snapshot, f *paneFrame) {
 		}
 		s.Restore()
 	}
+}
+
+// cursorRect is the active cursor's cell in widget coordinates.
+func (v *termView) cursorRect(f *paneFrame) (x, y, w, h float64) {
+	col := f.x + min(max(f.cursor.X, 0), max(f.cols-1, 0))
+	row := f.y + min(max(f.cursor.Y, 0), max(f.rows-1, 0))
+	return v.pad + v.colX(col), v.pad + float64(row)*v.cellH, v.colX(col+1) - v.colX(col), v.cellH
+}
+
+func (v *termView) reportCursor(f *paneFrame) {
+	x, y, w, h := v.cursorRect(f)
+	v.imeReportCursor(x, y, w, h)
+}
+
+func (v *termView) drawPreeditAtCursor(s *gtk.Snapshot, f *paneFrame) {
+	x, y, _, _ := v.cursorRect(f)
+	v.drawPreedit(s, x, y)
 }
 
 // drawScrollbar shows the scroll position in the pane's reserved column

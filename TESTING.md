@@ -42,16 +42,15 @@ file on disk, tab actions.
 | `TestGUI_HeaderAndTabInfo` | cwd in the header subtitle, pane count on the tab |
 | `TestGUI_PassthroughBypassesWindowShortcuts` | Ctrl+F12 passthrough also hands window shortcuts to the program |
 | `TestGUI_TabMenu` | right-click menu opens; Close Other Tabs |
+| `TestGUI_IME` | input-method text reaches the program and the search bar; composition drawn at the cursor, cursor location reported |
+| `TestGUI_WaylandIMStress` | rapid window/tab/entry churn on the Wayland input method, in a child process (this used to crash GTK) |
 
 They need a Wayland or X display (`WAYLAND_DISPLAY` / `DISPLAY`) and skip
 without one; `BUNKER_NO_GUI_TESTS=1` skips them explicitly. The harness
 owns the process's main thread for GTK (`onMain`, `waitMain`) and keeps the
 GLib main loop running, so frame clocks, idles, and file monitors behave as
-in the app. Two environment details:
+in the app, with the same input method users have. One environment detail:
 
-- Tests use GTK's simple input-method module. GTK's Wayland IM code can crash
-  (`gtk_im_context_wayland_global_get`) when windows are created and destroyed
-  as fast as these tests do.
 - `make test` turns off `checkptr` for the gotk4 packages only: `-race`
   enables it, and gotk4's generated marshallers convert uintptrs to pointers.
   A bare `go test -race .` therefore aborts in gotk4; use `make test`.

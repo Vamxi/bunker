@@ -46,11 +46,6 @@ func TestMain(m *testing.M) {
 		os.Exit(m.Run())
 	}
 	runtime.LockOSThread()
-	// GTK's Wayland input-method code can dereference a stale text-input
-	// object when windows are created and destroyed in quick succession, as
-	// these tests do (crash in gtk_im_context_wayland_global_get). The simple
-	// IM module avoids that path; it is not what users run.
-	os.Setenv("GTK_IM_MODULE", "gtk-im-context-simple") //nolint:errcheck
 	if !gtk.InitCheck() {
 		os.Exit(m.Run())
 	}

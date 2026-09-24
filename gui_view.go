@@ -84,6 +84,8 @@ type termView struct {
 	rect    *graphene.Rect
 	point   *graphene.Point
 
+	ime imeState
+
 	mouseBtn  tcell.ButtonMask
 	mouseCell [2]int
 	scrollAcc float64

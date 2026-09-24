@@ -34,6 +34,8 @@ Early. What works today:
 - Keyboard through bunk's encoder: kitty keyboard protocol, application
   cursor/keypad modes, modifiers
 - Mouse selection, double-click word, wheel scrollback, mouse reporting to apps
+- Input methods: dead keys and Compose, CJK input with the candidate popup at
+  the cursor, GNOME's emoji picker, Ctrl+Shift+U
 - Clipboard, bracketed paste, font zoom, scrollback
 - Tabs as a sidebar (left/right) or a bar (top/bottom), coloured from the
   terminal theme, with titles from the running program
@@ -41,7 +43,7 @@ Early. What works today:
   any editor apply live
 
 Planned layers: theme importers (Ghostty format first), editable key
-bindings, IME input.
+bindings.
 
 ## Install
 
