@@ -44,6 +44,7 @@ file on disk, tab actions.
 | `TestGUI_TabMenu` | right-click menu opens; Close Other Tabs |
 | `TestGUI_Hyperlinks` | OSC 8 and plain URLs found under the pointer, URLs wrapped across rows, hover underline (pixel check), Ctrl+click opens, unsafe schemes refused, plain click still selects |
 | `TestGUI_IME` | input-method text reaches the program and the search bar; composition drawn at the cursor, cursor location reported |
+| `TestGUI_NoLeaks` | 15 cycles of tab + splits + output + close give back every goroutine, fd, child process, and heap byte; no zombies |
 | `TestGUI_WaylandIMStress` | rapid window/tab/entry churn on the Wayland input method, in a child process (this used to crash GTK) |
 
 `make test` runs them on a private headless GNOME compositor

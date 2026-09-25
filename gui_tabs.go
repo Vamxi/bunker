@@ -482,6 +482,13 @@ func (gw *guiWin) closeTab(t *guiTab) {
 	gw.tabs = slices.Delete(gw.tabs, i, i+1)
 	gw.stack.Remove(t.view)
 	gw.strip.Remove(t.row)
+	// The row's buttons hold closures over t, and t holds the row: dispose
+	// it so GTK drops the children and the cycle can be collected.
+	runDispose(t.row)
+	t.view.release()
+	t.app.mu.Lock()
+	t.app.root, t.app.active, t.app.lastClickPane = nil, nil, nil
+	t.app.mu.Unlock()
 	for _, other := range gw.tabs {
 		other.applyRowMode() // numbers shift down
 	}

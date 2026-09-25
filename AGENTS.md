@@ -224,6 +224,11 @@ Key fields agents may need to know about:
 
 ## Gotchas
 
+- gotk4 keeps a Go-subclassed widget (`termView`) alive until GLib disposes
+  it, and the Wayland input method holds its widget. Closing a tab therefore
+  clears the IM client, disposes the view and the row, and drops the tab's
+  panes; `TestGUI_NoLeaks` guards it.
+
 - TUI owns stderr — do not write logs there. All diagnostic output goes
   through `slog` to the log file (`~/.local/state/bunker/bunker.log`). Errors that the user
   needs to see surface through the UI.

@@ -105,6 +105,22 @@ var termViewType = coreglib.RegisterSubclassWithConstructor[*termView](
 	}),
 )
 
+// release frees a closed tab's view. The input method lets go of the widget
+// (on Wayland it holds a reference), then the view is disposed, which drops
+// the Go side and, through it, the tab's panes and scrollback.
+func (v *termView) release() {
+	if v.ime.ctx != nil {
+		v.ime.ctx.SetClientWidget(nil)
+	}
+	if v.reflowTimer != nil {
+		v.reflowTimer.Stop()
+	}
+	clear(v.frames)
+	clear(v.layouts)
+	v.hoverLink = nil
+	runDispose(v)
+}
+
 func newTermView(app *App, cfg Config) *termView {
 	v := termViewType.New()
 	v.app = app

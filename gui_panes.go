@@ -19,6 +19,10 @@ static void bunker_push_rounded_clip(uintptr_t snapshot, float x, float y, float
 	gsk_rounded_rect_init_from_rect(&rr, &bounds, r);
 	gtk_snapshot_push_rounded_clip(GTK_SNAPSHOT((gpointer)snapshot), &rr);
 }
+
+static void bunker_run_dispose(uintptr_t obj) {
+	g_object_run_dispose(G_OBJECT((gpointer)obj));
+}
 */
 import "C"
 
@@ -37,6 +41,14 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/gdamore/tcell/v2"
 )
+
+// runDispose disposes a GTK object now. gotk4 keeps the Go value of a
+// Go-subclassed widget (termView) in a global table until GLib disposes the
+// widget, and that value keeps the widget alive, so neither is ever freed
+// unless something disposes it.
+func runDispose(o coreglib.Objector) {
+	C.bunker_run_dispose(C.uintptr_t(coreglib.BaseObject(o).Native()))
+}
 
 // paneFrame is one pane's state copied out for a frame.
 type paneFrame struct {

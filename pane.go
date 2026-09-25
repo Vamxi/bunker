@@ -987,6 +987,13 @@ func (p *Pane) waitForExit(paneDead chan *Pane, done chan struct{}) {
 	p.mu.Lock()
 	p.dead = true
 	p.mu.Unlock()
+	// After shutdown nobody reads paneDead; a pane parked in its buffer would
+	// keep its scrollback alive.
+	select {
+	case <-done:
+		return
+	default:
+	}
 	select {
 	case paneDead <- p:
 	case <-done:
