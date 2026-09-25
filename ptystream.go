@@ -1,6 +1,10 @@
 package main
 
-import "bunker/internal/graphics"
+import (
+	"bytes"
+
+	"bunker/internal/graphics"
+)
 
 type ptyParseState uint8
 
@@ -24,18 +28,24 @@ type ptyStream struct {
 }
 
 func (s *ptyStream) scan(chunk []byte) []byte {
-	out := append([]byte(nil), s.utf8...)
+	out := make([]byte, 0, len(s.utf8)+len(chunk))
+	out = append(out, s.utf8...)
 	s.utf8 = s.utf8[:0]
-	for _, b := range chunk {
+	for i := 0; i < len(chunk); i++ {
 		if s.state == ptyText {
-			if b != 0x1b {
-				out = append(out, b)
-				continue
+			// Text passes through as is: copy up to the next ESC at once.
+			esc := bytes.IndexByte(chunk[i:], 0x1b)
+			if esc < 0 {
+				out = append(out, chunk[i:]...)
+				break
 			}
+			out = append(out, chunk[i:i+esc]...)
+			i += esc
 			s.state = ptyEscape
-			s.pending = append(s.pending[:0], b)
+			s.pending = append(s.pending[:0], 0x1b)
 			continue
 		}
+		b := chunk[i]
 		if b == 0x18 || b == 0x1a { // CAN/SUB cancel an unfinished control.
 			if s.graphics {
 				out = append(out, b)
@@ -53,7 +63,9 @@ func (s *ptyStream) scan(chunk []byte) []byte {
 				s.discard = true
 			} else {
 				s.pending = append(s.pending, b)
-				if !s.graphics && len(s.pending) >= 3 && len(s.pending) <= 82 {
+				// Only string controls carry graphics (IsCommand is false for
+				// every other introducer); CSI, the bulk of escapes, skip it.
+				if !s.graphics && s.state == ptyString && len(s.pending) >= 3 && len(s.pending) <= 82 {
 					s.graphics = graphics.IsCommand(rune(s.pending[1]), s.pending[2:])
 				}
 			}

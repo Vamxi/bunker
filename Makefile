@@ -19,9 +19,15 @@ BENCHSTAT := go run golang.org/x/perf/cmd/benchstat@latest
 # so they work with the screen locked and never touch the desktop session.
 HEADLESS := $(if $(shell command -v mutter 2>/dev/null),dbus-run-session -- ./scripts/headless-gui.sh)
 
+# Tests that check fast paths against references over every input they can
+# (all of Unicode, thousands of random streams). They run sampled under the
+# race detector and in full here.
+EXHAUSTIVE := TestUniInfoMatchesUniseg|TestFastScannersMatchReference|TestUsedInvariant
+
 # Everything, including the GUI integration tests. See TESTING.md.
 test:
 	$(HEADLESS) go test $(PKG) github.com/gdamore/tcell/v2/... -count=1 $(RACEFLAGS)
+	BUNKER_NO_GUI_TESTS=1 go test . ./internal/vt10x -run '$(EXHAUSTIVE)' -count=1
 
 # Only the GUI integration tests.
 test-gui:

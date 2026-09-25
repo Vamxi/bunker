@@ -47,7 +47,7 @@ func usedToken(r *rand.Rand, cols, rows int) string {
 	case 7:
 		return []string{"\t", "\b", "\x1bM", "\x1bD", "\x1bE", "\x1b7", "\x1b8"}[r.IntN(7)]
 	case 8:
-		return []string{"日本", "漢", "😀", "👩‍💻", "é", "1️⃣", "́", "‍"}[r.IntN(8)]
+		return []string{"日本", "漢", "😀", "👩\u200d💻", "e\u0301", "1\ufe0f\u20e3", "\u0301", "\u200d"}[r.IntN(8)]
 	case 9:
 		return fmt.Sprintf("\x1b[%d;%dH", n(rows+2), n(cols+2))
 	case 10:

@@ -15,6 +15,7 @@ make check       # fmt, vet, test, build, lint: the gate before a release
 |---|---|---|
 | Emulator | `internal/vt10x/*_test.go` | escape sequences, modes, wide/combining text, scroll regions, graphics, CSI parameter parsing |
 | Fast-path equivalence | `internal/vt10x/throughput_test.go`, `csi_parse_test.go` | the ASCII fast path and the allocation-free CSI parser produce exactly what the general parser does, over thousands of random inputs |
+| Exhaustive | `uniinfo_test.go`, `used_test.go`, `scanfast_test.go` (references in `scanref_test.go`) | the Unicode table matches uniseg for every code point; rows never hold content past their used count; the fast PTY pre-scanners match their byte-at-a-time originals on random escape-heavy streams. Sampled under `-race`, run in full by `make test` |
 | Pane, scrollback, reflow, search, TUI | root `*_test.go` (from bunk) | PTY bridge, scrollback ring, resize reflow, selection, search, mouse, keys, rendering in `bunker tui` |
 | Config | `config_test.go`, `tomledit_test.go`, `scrollswap_test.go`, `bunkconfig_test.go` | loading and validation, comment-preserving edits, atomic writes, scrollback caps; bunk's own config (`testdata/bunk-config.toml`) works when copied into bunker |
 | GUI logic | `gui_input_test.go`, `gui_tabs_test.go`, `gui_links_test.go` | GDK key → terminal bytes, box-drawing table, tab labels, rename rules, separators, URL detection, link scheme allowlist |

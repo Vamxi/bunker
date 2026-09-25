@@ -86,6 +86,9 @@ Key local extensions to vendored vt10x:
   blank), so clearing and scrolling cost a line's length, not the width.
   Every cell write goes through `occupy`; `TestUsedInvariant` fuzzes it, and
   the scroll-swap callback passes used counts to and from scrollback.
+- Character widths and "does this rune start a grapheme cluster" come from
+  `uniInfo`, a per-rune table filled from uniseg 256 runes at a time;
+  `TestUniInfoMatchesUniseg` checks every code point against uniseg.
 - DECRQSS reports SGR, scroll margins, and cursor style; unsupported settings
   return a negative response. Unknown DECRQM modes return status 0, not 4.
 

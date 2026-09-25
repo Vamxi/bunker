@@ -6,8 +6,6 @@ import (
 	"log"
 	"strings"
 	"sync"
-
-	"github.com/rivo/uniseg"
 )
 
 const (
@@ -699,7 +697,7 @@ func runeCellWidth(c rune) int {
 	if c < 0x80 {
 		return 1
 	}
-	return max(1, uniseg.StringWidth(string(c)))
+	return max(1, int(uniInfo(c)&uniWidth))
 }
 
 func (t *State) eraseCell(x, y int) {

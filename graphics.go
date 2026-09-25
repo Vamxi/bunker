@@ -58,15 +58,36 @@ func (p *Pane) trimRawHistory() {
 	p.rawBuf = p.rawBuf[:n]
 }
 
+// controlBoundary returns the first position at or after target that is
+// neither inside a control sequence nor inside a UTF-8 encoded rune, walking
+// runes with utf8.DecodeRune from the start of data.
 func controlBoundary(data []byte, target int) int {
 	for i := 0; i < len(data); {
 		if i >= target {
 			return i
 		}
 		if data[i] != 0x1b {
-			_, size := utf8.DecodeRune(data[i:])
-			i += size
-			continue
+			// Text up to the next ESC: if target lies in it, find the first
+			// rune start at or after target. DecodeRune never steps over an
+			// ASCII byte, so walking from the last ASCII byte before target
+			// lands exactly where walking from i would.
+			end := len(data)
+			if esc := bytes.IndexByte(data[i:], 0x1b); esc >= 0 {
+				end = i + esc
+			}
+			if target >= end {
+				i = end
+				continue
+			}
+			j := target
+			for j > i && data[j] >= utf8.RuneSelf {
+				j--
+			}
+			for j < target {
+				_, size := utf8.DecodeRune(data[j:end])
+				j += size
+			}
+			return j
 		}
 		if i+1 == len(data) {
 			return i

@@ -459,7 +459,7 @@ func (p *Pane) expireSyncUpdate(until time.Time) {
 }
 
 func isTransientLineClear(chunk []byte) bool {
-	if len(chunk) < 3 || bytes.ContainsAny(chunk, "\n\x1b") {
+	if len(chunk) < 3 || bytes.IndexByte(chunk, '\n') >= 0 || bytes.IndexByte(chunk, 0x1b) >= 0 {
 		return false
 	}
 
@@ -486,8 +486,8 @@ func isTransientLineClear(chunk []byte) bool {
 
 func isInPlaceLineUpdate(chunk []byte) bool {
 	return len(chunk) > 0 &&
-		bytes.Contains(chunk, []byte("\r")) &&
-		!bytes.ContainsAny(chunk, "\n\x1b")
+		bytes.IndexByte(chunk, '\r') >= 0 &&
+		bytes.IndexByte(chunk, '\n') < 0 && bytes.IndexByte(chunk, 0x1b) < 0
 }
 
 // glyphBytes is the in-memory size of one scrollback cell.
@@ -553,6 +553,43 @@ func (p *Pane) onScrollbackClear() {
 		}
 	}
 	p.rawBuf = p.rawBuf[cut:]
+}
+
+// Sequences that enter and leave the alternate screen, in the order
+// writeTerminalChunk prefers them.
+var (
+	altScreenEnter = []string{"\x1b[?1049h", "\x1b[?1047h", "\x1b[?47h"}
+	altScreenExit  = []string{"\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"}
+)
+
+// indexFirstOf returns the first of seqs, in list order, that occurs in
+// chunk, and where it first occurs: what calling bytes.Index for each in
+// turn returns, in one pass over the escapes. Every seq starts with "\x1b[?".
+func indexFirstOf(chunk []byte, seqs []string) (int, string) {
+	first := [3]int{-1, -1, -1}
+	found := 0
+	for i := 0; i < len(chunk) && found < len(seqs); i++ {
+		esc := bytes.IndexByte(chunk[i:], 0x1b)
+		if esc < 0 {
+			break
+		}
+		i += esc
+		if !bytes.HasPrefix(chunk[i:], []byte("\x1b[?")) {
+			continue
+		}
+		for k, seq := range seqs {
+			if first[k] < 0 && bytes.HasPrefix(chunk[i:], []byte(seq)) {
+				first[k] = i
+				found++
+			}
+		}
+	}
+	for k, seq := range seqs {
+		if first[k] >= 0 {
+			return first[k], seq
+		}
+	}
+	return -1, ""
 }
 
 // captureAndWrite writes chunk to vt10x and answers terminal capability
@@ -624,31 +661,28 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 	wrote := false
 	exitSplitAt := 0 // byte offset into chunk just after the ?1049l/47l sequence, 0 if none
 	if !altScreen {
-		for _, seq := range []string{"\x1b[?1049h", "\x1b[?1047h", "\x1b[?47h"} {
+		if i, seq := indexFirstOf(chunk, altScreenEnter); i >= 0 {
 			b := []byte(seq)
-			if i := bytes.Index(chunk, b); i >= 0 {
-				// Write everything BEFORE the alt-screen entry sequence first,
-				// so any cursor-movement sequences in this chunk (e.g. vim's
-				// \r\n or \x1b[row;colH) update the vt10x cursor position.
-				// Only then read the cursor — otherwise over SSH where many
-				// sequences arrive in one chunk, the pre-entry cursor moves
-				// are missed and we save y=0 instead of the actual prompt row.
-				if i > 0 {
-					p.term.Write(chunk[:i]) //nolint:errcheck
-				}
-				cur := p.term.Cursor()
-				p.altEntryCursorX, p.altEntryCursorY = cur.X, cur.Y
-				L.Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen entry", "pane", p.id, "seq", seq, "cursor_x", cur.X, "cursor_y", cur.Y)
-
-				end := i + len(b)
-				p.term.Write(chunk[i:end])            //nolint:errcheck
-				p.term.Write([]byte("\x1b[2J\x1b[H")) //nolint:errcheck
-				if end < len(chunk) {
-					p.term.Write(chunk[end:]) //nolint:errcheck
-				}
-				wrote = true
-				break
+			// Write everything BEFORE the alt-screen entry sequence first,
+			// so any cursor-movement sequences in this chunk (e.g. vim's
+			// \r\n or \x1b[row;colH) update the vt10x cursor position.
+			// Only then read the cursor — otherwise over SSH where many
+			// sequences arrive in one chunk, the pre-entry cursor moves
+			// are missed and we save y=0 instead of the actual prompt row.
+			if i > 0 {
+				p.term.Write(chunk[:i]) //nolint:errcheck
 			}
+			cur := p.term.Cursor()
+			p.altEntryCursorX, p.altEntryCursorY = cur.X, cur.Y
+			L.Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen entry", "pane", p.id, "seq", seq, "cursor_x", cur.X, "cursor_y", cur.Y)
+
+			end := i + len(b)
+			p.term.Write(chunk[i:end])            //nolint:errcheck
+			p.term.Write([]byte("\x1b[2J\x1b[H")) //nolint:errcheck
+			if end < len(chunk) {
+				p.term.Write(chunk[end:]) //nolint:errcheck
+			}
+			wrote = true
 		}
 	}
 	// If this chunk crosses an alt-screen EXIT point:
@@ -660,26 +694,23 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 	//      the prompt line (undoing the natural cursor advance from the prompt text)
 	//      causing subsequent input to overwrite PS1.
 	if !wrote && altScreen {
-		for _, seq := range []string{"\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"} {
+		if i, seq := indexFirstOf(chunk, altScreenExit); i >= 0 {
 			b := []byte(seq)
-			if i := bytes.Index(chunk, b); i >= 0 {
-				end := i + len(b)
-				exitSplitAt = end
-				p.term.Write(chunk[:end])       //nolint:errcheck
-				p.term.Write([]byte("\x1b[0m")) //nolint:errcheck
-				// Restore primary cursor here — before any trailing output
-				// in this chunk (e.g. prompt text) — so the prompt text
-				// advances the cursor naturally to the correct position.
-				L.Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen exit", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
-				curRestore := fmt.Sprintf("\x1b[%d;%dH", p.altEntryCursorY+1, p.altEntryCursorX+1)
-				L.Log(context.Background(), LevelTrace, "captureAndWrite: injecting curRestore", "pane", p.id, "seq", curRestore)
-				p.term.Write([]byte(curRestore)) //nolint:errcheck
-				if end < len(chunk) {
-					p.term.Write(chunk[end:]) //nolint:errcheck
-				}
-				wrote = true
-				break
+			end := i + len(b)
+			exitSplitAt = end
+			p.term.Write(chunk[:end])       //nolint:errcheck
+			p.term.Write([]byte("\x1b[0m")) //nolint:errcheck
+			// Restore primary cursor here — before any trailing output
+			// in this chunk (e.g. prompt text) — so the prompt text
+			// advances the cursor naturally to the correct position.
+			L.Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen exit", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
+			curRestore := fmt.Sprintf("\x1b[%d;%dH", p.altEntryCursorY+1, p.altEntryCursorX+1)
+			L.Log(context.Background(), LevelTrace, "captureAndWrite: injecting curRestore", "pane", p.id, "seq", curRestore)
+			p.term.Write([]byte(curRestore)) //nolint:errcheck
+			if end < len(chunk) {
+				p.term.Write(chunk[end:]) //nolint:errcheck
 			}
+			wrote = true
 		}
 	}
 	if !wrote {
@@ -840,9 +871,11 @@ func vtColorToXParse(c vt10x.Color) string {
 
 func nextTerminalQuery(data []byte, from int) (terminalQuery, bool) {
 	for i := from; i+1 < len(data); i++ {
-		if data[i] != 0x1b {
-			continue
+		esc := bytes.IndexByte(data[i:len(data)-1], 0x1b)
+		if esc < 0 {
+			break
 		}
+		i += esc
 		switch data[i+1] {
 		case '[':
 			if q, ok := parseCSIQuery(data, i); ok {
@@ -885,6 +918,15 @@ func nextTerminalQuery(data []byte, from int) (terminalQuery, bool) {
 
 func parseCSIQuery(data []byte, start int) (terminalQuery, bool) {
 	rest := data[start:]
+	// Every query below ends in one of these final bytes; reject the rest
+	// (colours, cursor moves) after reading only their parameters.
+	k := 2
+	for k < len(rest) && rest[k] >= 0x20 && rest[k] <= 0x3f {
+		k++
+	}
+	if k == len(rest) || bytes.IndexByte([]byte("tcnqp"), rest[k]) < 0 {
+		return terminalQuery{}, false
+	}
 	switch {
 	case bytes.HasPrefix(rest, []byte("\x1b[14t")):
 		return terminalQuery{start: start, end: start + 5, kind: terminalQuerySize, mode: 14}, true

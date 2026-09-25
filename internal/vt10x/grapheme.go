@@ -2,6 +2,7 @@ package vt10x
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/rivo/uniseg"
 )
@@ -32,13 +33,21 @@ func (t *State) extendGrapheme(c rune) bool {
 	if c < 0x80 && g.Char < 0x80 && g.ext == nil {
 		return false
 	}
+	// Most other text (CJK, emoji, accented letters) cannot join either.
+	last := g.Char
+	if comb := g.Combining(); comb != "" {
+		last, _ = utf8.DecodeLastRuneInString(comb)
+	}
+	if startsCluster(last, c) {
+		return false
+	}
 	text := g.Text() + string(c)
 	_, rest, width, _ := uniseg.FirstGraphemeClusterInString(text, -1)
 	// uniseg 0.4.7 does not widen emoji keycap sequences.
 	if strings.ContainsRune(text, '\u20e3') && (g.Char >= '0' && g.Char <= '9' || g.Char == '#' || g.Char == '*') {
 		width = 2
 	}
-	if rest != "" || (t.mode&ModeGrapheme == 0 && uniseg.StringWidth(string(c)) != 0) {
+	if rest != "" || (t.mode&ModeGrapheme == 0 && uniInfo(c)&uniWidth != 0) {
 		return false
 	}
 	// A pathological combining sequence must not grow per-cell storage forever.

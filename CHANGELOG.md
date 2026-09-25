@@ -7,8 +7,13 @@ matching section as the GitHub release notes.
 
 ### Faster
 
-- Plain output scrolls about 40% faster (`seq 1 2000000`: 0.83 s → 0.51 s):
-  scrolling now clears only the part of a line that was used.
+- Plain output about 40% faster (`seq 1 2000000`: 0.83 s → 0.48 s):
+  scrolling clears only the part of a line that was used.
+- Coloured and Unicode output about 40% faster (52 MB of coloured text
+  with CJK and emoji: 1.81 s → 1.09 s): character widths and grapheme
+  checks come from a lookup table, and the byte stream is scanned with fast
+  byte searches instead of one byte at a time. Full-screen programs (btop,
+  vim) redraw about 4× faster in the emulator.
 
 ## 0.1.1
 

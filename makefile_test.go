@@ -57,7 +57,7 @@ fi
 				t.Fatal(err)
 			}
 			steps := strings.Fields(string(data))
-			want := "fmt vet test build lint"
+			want := "fmt vet test test build lint"
 			if fail {
 				want = "fmt vet test"
 			}

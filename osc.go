@@ -78,13 +78,18 @@ type oscScanner struct {
 // All bytes in chunk are also fed to vt10x by the caller regardless of what
 // Scan finds - vt10x must see the full stream to keep its state consistent.
 func (s *oscScanner) Scan(chunk []byte, emit func([]byte)) {
-	for _, b := range chunk {
+	for i := 0; i < len(chunk); i++ {
+		b := chunk[i]
 		switch s.state {
 
 		case oscIdle:
-			if b == 0x1b {
-				s.state = oscSeenESC
+			// Outside an OSC only ESC matters: jump to the next one.
+			esc := bytes.IndexByte(chunk[i:], 0x1b)
+			if esc < 0 {
+				return
 			}
+			i += esc
+			s.state = oscSeenESC
 
 		case oscSeenESC:
 			if b == ']' { // ESC ] = start of OSC
