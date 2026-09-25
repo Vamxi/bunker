@@ -79,12 +79,15 @@ build: bin/$(BINARY)
 release-version:
 	@case "$(VERSION)" in 0.0.0) echo "usage: make release VERSION=x.y.z"; exit 1;; esac
 	@if gh release view "v$(VERSION)" -R Vamxi/$(BINARY) >/dev/null 2>&1; then echo "v$(VERSION) is already released"; exit 1; fi
+	@grep -q '^## $(VERSION)$$' CHANGELOG.md || { echo "CHANGELOG.md has no '## $(VERSION)' section"; exit 1; }
 
 release: release-version build
 	tar -czf bin/$(BINARY)_linux_amd64.tar.gz --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_linux_amd64
 	GITHUB_TOKEN="$${GITHUB_TOKEN:-$$(gh auth token)}" grm release Vamxi/$(BINARY) \
 		-f bin/$(BINARY)_linux_amd64.tar.gz \
 		-t "v$(VERSION)"
+	awk '/^## /{p = ($$2 == "$(VERSION)"); next} p' CHANGELOG.md > bin/notes.md
+	gh release edit "v$(VERSION)" -R Vamxi/$(BINARY) --notes-file bin/notes.md
 
 run: test
 	go build -o $(BINARY) .

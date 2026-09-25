@@ -72,4 +72,5 @@ collapsed = false
 ## More
 
 - `bunker -- btop` runs a program instead of your shell
+- [CHANGELOG.md](CHANGELOG.md): what each release brings
 - [TESTING.md](TESTING.md): tests, benchmarks, and how not to regress
