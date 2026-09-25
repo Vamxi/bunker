@@ -78,14 +78,36 @@ func needGUI(t testing.TB) {
 	}
 }
 
-// onMain runs f on the GTK thread and waits for it.
+// mainStall is how long the GTK thread may stay busy before a test run is
+// stopped: anything that blocks it freezes the window for the user.
+const mainStall = 10 * time.Second
+
+// onMain runs f on the GTK thread and waits for it. If the thread does not
+// get to f, or f does not return, within mainStall, the run is stopped with
+// every goroutine's stack so the blocking call is visible.
 func onMain(f func()) {
 	done := make(chan struct{})
-	guiQueue <- func() {
+	task := func() {
 		defer close(done)
 		f()
 	}
-	<-done
+	stall := time.After(mainStall)
+	select {
+	case guiQueue <- task:
+	case <-stall:
+		panicMainStalled()
+	}
+	select {
+	case <-done:
+	case <-stall:
+		panicMainStalled()
+	}
+}
+
+func panicMainStalled() {
+	buf := make([]byte, 1<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	panic(fmt.Sprintf("GTK thread blocked for %v; goroutines:\n%s", mainStall, buf))
 }
 
 // waitMain polls cond on the GTK thread (the main loop keeps running in

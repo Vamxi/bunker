@@ -148,6 +148,13 @@ func run(configPath, themeName string, debug, trace bool) error {
 		done:            make(chan struct{}),
 		oscBuf:          newOSCBuffer(),
 	}
+	app.post = func(f func()) {
+		ev := &uiFuncEvent{f: f}
+		ev.SetEventNow()
+		if err := screen.PostEvent(ev); err != nil {
+			L.Warn("post to the event loop", "err", err)
+		}
+	}
 
 	screen.EnableMouse(tcell.MouseMotionEvents)
 	screen.EnablePaste()

@@ -412,14 +412,16 @@ func (app *App) copySelectionToClipboard() {
 // query (newlines, C0/C1 control codepoints).  Multi-line selections paste
 // as their joined visible characters.
 func (app *App) pasteIntoSearchQuery() {
-	clean := stripForSearchQuery(readClipboard())
-	if clean == "" {
-		return
-	}
-	app.mu.Lock()
-	app.searchQuery += clean
-	app.mu.Unlock()
-	app.updateSearch()
+	app.clip().paste(func(text string) {
+		clean := stripForSearchQuery(text)
+		if clean == "" {
+			return
+		}
+		app.mu.Lock()
+		app.searchQuery += clean
+		app.mu.Unlock()
+		app.updateSearch()
+	})
 }
 
 // stripForSearchQuery removes C0 (U+0000-U+001F) and C1 (U+007F-U+009F)

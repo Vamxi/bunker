@@ -177,6 +177,15 @@ shows a banner.
 
 - GTK runs on the main thread only; goroutines reach it through
   `glib.IdleAdd`.
+- Nothing on the UI thread may block: no external commands (clipboard tools,
+  podman, docker), no network, no waits on other processes. Slow work runs
+  through `App.offUIThread` and hands its result back with `onUIThread`
+  (`App.post`: `glib.IdleAdd` in the window, the tcell event loop in the TUI).
+  The window uses GTK's clipboard (`gtkClipboard`) because it can own the
+  clipboard itself, and a blocking `wl-paste` would then wait on its own main
+  loop forever. Every GUI test fails with goroutine stacks if the GTK thread
+  stalls for 10 s (`onMain`), and the running app logs stacks to stderr when
+  it stalls for 5 s (`watchUIThread`).
 - The GUI reuses bunk's `App` (one per tab) without a tcell screen, so keys
   and mouse behave the same in both frontends. Screen-dependent code is
   behind hooks (`sizeFn`, `onEmpty`); new `App` code must not assume a screen.

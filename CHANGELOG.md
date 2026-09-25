@@ -3,6 +3,18 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
+## 0.2.1
+
+### Fixed
+
+- Pasting with Ctrl+V after copying inside bunker froze the window. bunk's
+  copy and paste keys now use the window's own clipboard, like
+  Ctrl+Shift+C and Ctrl+Shift+V, and never wait on a clipboard command.
+- A split into the same container (Alt+F1) no longer freezes the window
+  while podman or docker answers.
+- If the window ever stops responding for 5 seconds, bunker logs where it is
+  stuck, so the cause can be found.
+
 ## 0.2.0
 
 ### Added

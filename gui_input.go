@@ -9,9 +9,11 @@ package main
 
 import (
 	"context"
+	"strings"
 
 	"bunker/internal/vt10x"
 
+	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -436,21 +438,78 @@ func (v *termView) copySelection() {
 		text = p.selText()
 	}
 	p.mu.Unlock()
-	if text != "" {
-		v.Clipboard().SetText(text)
-	}
+	v.app.copyToClipboard(text)
 }
 
 func (v *termView) pasteClipboard() {
-	clip := v.Clipboard()
-	clip.ReadTextAsync(context.Background(), func(res gio.AsyncResulter) {
-		defer guiRecover("paste")
-		text, err := clip.ReadTextFinish(res)
-		if err != nil || text == "" {
-			return
+	v.app.clip().paste(v.pasteText)
+}
+
+// gtkClipboard is bunk's clipboard in the window. It must be used on the
+// GTK thread, where bunk's key handling runs.
+type gtkClipboard struct{ v *termView }
+
+func (c gtkClipboard) copy(text string) { c.v.Clipboard().SetText(text) }
+
+func (c gtkClipboard) paste(deliver func(string)) bool {
+	clip := c.v.Clipboard()
+	formats := clip.Formats()
+	switch {
+	case clipboardHasText(formats):
+		clip.ReadTextAsync(context.Background(), func(res gio.AsyncResulter) {
+			defer guiRecover("paste text")
+			text, err := clip.ReadTextFinish(res)
+			if err != nil {
+				L.Warn("gui: read clipboard text", "err", err)
+				return
+			}
+			if text != "" {
+				deliver(text)
+			}
+		})
+	case clipboardHasImage(formats):
+		clip.ReadTextureAsync(context.Background(), func(res gio.AsyncResulter) {
+			defer guiRecover("paste image")
+			tex, err := clip.ReadTextureFinish(res)
+			if err != nil || tex == nil {
+				L.Warn("gui: read clipboard image", "err", err)
+				return
+			}
+			path, err := savePastedPNG(gdk.BaseTexture(tex).SaveToPNGBytes().Data())
+			if err != nil {
+				L.Warn("gui: save clipboard image", "err", err)
+				return
+			}
+			deliver(path)
+		})
+	default:
+		return false
+	}
+	return true
+}
+
+func clipboardHasText(f *gdk.ContentFormats) bool {
+	if f.ContainGType(coreglib.TypeString) {
+		return true
+	}
+	for _, mime := range f.MIMETypes() {
+		if strings.HasPrefix(mime, "text/plain") || mime == "UTF8_STRING" || mime == "STRING" || mime == "TEXT" {
+			return true
 		}
-		v.pasteText(text)
-	})
+	}
+	return false
+}
+
+func clipboardHasImage(f *gdk.ContentFormats) bool {
+	if f.ContainGType(gdk.GTypeTexture) {
+		return true
+	}
+	for _, mime := range f.MIMETypes() {
+		if strings.HasPrefix(mime, "image/") {
+			return true
+		}
+	}
+	return false
 }
 
 // pasteText writes text as a paste (see pasteBytes): CR line endings, and

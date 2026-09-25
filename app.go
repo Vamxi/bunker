@@ -121,6 +121,11 @@ type App struct {
 	// pane is removed. Both may be nil when screen is set.
 	sizeFn  func() (w, h int)
 	onEmpty func()
+	// clipboard replaces the TUI's clipboard tools (see clipboard.go).
+	clipboard clipboard
+	// post runs a function on the UI thread (the GTK main loop, or the
+	// event loop below). nil runs it at once, which tests rely on.
+	post func(func())
 }
 
 // viewSize is the full grid size available to panes.
@@ -245,6 +250,8 @@ func (app *App) eventLoop() {
 			return // screen.Fini() was called
 		}
 		switch ev := ev.(type) {
+		case *uiFuncEvent:
+			ev.f()
 		case *tcell.EventResize:
 			L.Debug("event: resize")
 			app.handleResize()
@@ -499,17 +506,166 @@ func (app *App) forwardKey(ev *tcell.EventKey) {
 // Pane management
 // ---------------------------------------------------------------------------
 
+// splitActive splits the active pane. With inheritContext the new pane
+// enters the same container, SSH host, or sudo session. Finding that can run
+// podman or docker, which may take seconds, so it runs off the UI thread and
+// the split happens when the answer arrives.
 func (app *App) splitActive(inheritContext bool) {
+	app.mu.Lock()
+	src := app.active
+	app.mu.Unlock()
+	if src == nil {
+		L.Debug("splitActive: no active pane, skipping")
+		return
+	}
+	if !inheritContext {
+		app.splitPane(src, nil)
+		return
+	}
+	c := src.splitContext()
+	app.offUIThread(func() {
+		args := resolveSplitArgs(c)
+		app.onUIThread(func() { app.splitPane(src, args) })
+	})
+}
+
+// offUIThread runs slow work (external commands) where it cannot freeze the
+// UI; it pairs with onUIThread to hand the result back.
+func (app *App) offUIThread(work func()) {
+	if app.post == nil {
+		work()
+		return
+	}
+	go work()
+}
+
+// onUIThread runs f on the UI thread.
+func (app *App) onUIThread(f func()) {
+	if app.post == nil {
+		f()
+		return
+	}
+	app.post(f)
+}
+
+// uiFuncEvent carries a function to the TUI event loop.
+type uiFuncEvent struct {
+	tcell.EventTime
+	f func()
+}
+
+// splitContext is what a context split needs to know about its pane, read
+// once under the pane's lock.
+type splitContext struct {
+	pane          int
+	cid, ct       string // container ID (or image name) and type
+	fgProc, shell string
+	shellPid      int
+}
+
+func (p *Pane) splitContext() splitContext {
+	p.mu.Lock()
+	c := splitContext{pane: p.id, cid: p.containerID, ct: p.containerType, fgProc: p.fgProcess}
+	if p.cmd.Process != nil {
+		c.shellPid = p.cmd.Process.Pid
+	}
+	p.mu.Unlock()
+	c.shell = os.Getenv("SHELL")
+	if c.shell == "" {
+		c.shell = "/bin/sh"
+	}
+	return c
+}
+
+// resolveSplitArgs returns the command that enters c's context, or nil for
+// the host shell. It may run podman or docker and read /proc.
+func resolveSplitArgs(c splitContext) []string {
+	L.Debug("splitActive: context inherit requested",
+		"pane", c.pane, "fgProc", c.fgProc, "shellPid", c.shellPid,
+		"containerType", c.ct, "containerID", c.cid)
+	var spawnArgs []string
+	switch {
+	case (c.ct == "lxc" || c.ct == "incus") && c.cid != "" && c.shellPid > 0:
+		// `lxc exec` is the foreground process — reuse its exact cmdline
+		// so that `lxc exec xx -- su --login jsn` is preserved verbatim.
+		if args := fgProcessCmdline(c.shellPid); len(args) > 0 {
+			spawnArgs = args
+			L.Debug("splitActive: cloning lxc/incus exec cmdline", "spawnArgs", spawnArgs)
+		} else if isRunningContainer(c.cid, c.ct) {
+			spawnArgs = containerSpawnArgs(c.cid, c.ct, c.shell)
+			L.Debug("splitActive: lxc/incus fallback to containerSpawnArgs", "spawnArgs", spawnArgs)
+		}
+	case c.ct == "lxd" && c.shellPid > 0:
+		// "lxd" means we're inside an LXC container as seen from the host.
+		// Walk the process tree up from the foreground to find the
+		// `lxc exec` ancestor and reuse its full cmdline — this preserves
+		// any `su --login <user>` or other entry command.
+		fgPid := termFgPGID(c.shellPid)
+		if fgPid <= 0 {
+			fgPid = c.shellPid
+		}
+		if args := findLXCAncestorCmdline(fgPid); len(args) > 0 {
+			spawnArgs = args
+			L.Debug("splitActive: cloning lxc exec ancestor", "spawnArgs", spawnArgs)
+		} else {
+			L.Debug("splitActive: lxd container but no lxc ancestor found (bunk is inside container), using host shell")
+		}
+	case c.cid != "" && c.ct != "" && isRunningContainer(c.cid, c.ct):
+		spawnArgs = containerSpawnArgs(c.cid, c.ct, c.shell)
+		L.Debug("splitActive: using container context", "spawnArgs", spawnArgs)
+	case (c.ct == "podman" || c.ct == "docker") && c.shellPid > 0:
+		// "podman run <image>" — cid is an image name, not a running
+		// container ID.  Try two strategies:
+		// 1. Walk child process tree looking for libpod cgroup entry.
+		// 2. Ask podman/docker to list containers with the ancestor image.
+		fgPid := termFgPGID(c.shellPid)
+		if fgPid <= 0 {
+			fgPid = c.shellPid
+		}
+		containerID := findRunningContainerFromPID(fgPid)
+		L.Debug("splitActive: process-tree walk result", "containerID", containerID, "fgPid", fgPid)
+		if containerID == "" && c.cid != "" {
+			containerID = findContainerByAncestor(c.cid, c.ct)
+			L.Debug("splitActive: ancestor filter result", "containerID", containerID, "image", c.cid)
+		}
+		if containerID != "" {
+			spawnArgs = []string{c.ct, "exec", "-it", containerID, c.shell}
+			L.Debug("splitActive: resolved podman/docker run container", "containerID", containerID, "spawnArgs", spawnArgs)
+		} else {
+			L.Debug("splitActive: podman/docker run but could not resolve container ID", "fgPid", fgPid, "image", c.cid)
+		}
+	case (c.fgProc == "ssh" || c.fgProc == "mosh") && c.shellPid > 0:
+		if args := fgProcessCmdline(c.shellPid); len(args) > 0 {
+			spawnArgs = args
+			L.Debug("splitActive: cloning ssh/mosh session", "spawnArgs", spawnArgs)
+		} else {
+			L.Debug("splitActive: ssh/mosh detected but cmdline empty", "shellPid", c.shellPid)
+		}
+	case c.fgProc == "sudo" && c.shellPid > 0:
+		if args := fgProcessCmdline(c.shellPid); len(args) > 0 {
+			spawnArgs = args
+			L.Debug("splitActive: cloning sudo session", "spawnArgs", spawnArgs)
+		} else {
+			L.Debug("splitActive: sudo detected but cmdline empty", "shellPid", c.shellPid)
+		}
+	default:
+		L.Debug("splitActive: no context to inherit, using host shell")
+	}
+	return spawnArgs
+}
+
+// splitPane splits src, if it is still open, running spawnArgs in the new
+// pane (nil: the host shell).
+func (app *App) splitPane(src *Pane, spawnArgs []string) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
-	if app.active == nil || app.root == nil {
-		L.Debug("splitActive: no active pane or root, skipping")
+	if app.root == nil {
 		return
 	}
-	node := app.root.findPane(app.active)
+	node := app.root.findPane(src)
 	if node == nil {
-		L.Debug("splitActive: active pane not found in tree")
+		L.Debug("splitActive: pane closed before the split", "pane", src.id)
 		return
 	}
 
@@ -526,7 +682,7 @@ func (app *App) splitActive(inheritContext bool) {
 		d = splitHorizontal
 	}
 	L.Debug("splitActive: direction decision",
-		"pane", app.active.id,
+		"pane", src.id,
 		"node_cols", node.w, "node_rows", node.h,
 		"cell_aspect", app.cellAspect,
 		"pixel_w", int(pixelW), "pixel_h", int(pixelH),
@@ -552,95 +708,9 @@ func (app *App) splitActive(inheritContext bool) {
 	}
 	nx, ny := rx, ry
 
-	// Inherit the working directory from the active pane's foreground process.
-	dir := app.active.cwd()
-
-	app.active.mu.Lock()
-	cid := app.active.containerID
-	ct := app.active.containerType
-	fgProc := app.active.fgProcess
-	shellPid := 0
-	if app.active.cmd.Process != nil {
-		shellPid = app.active.cmd.Process.Pid
-	}
-	app.active.mu.Unlock()
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-	var spawnArgs []string
-	if inheritContext {
-		L.Debug("splitActive: context inherit requested",
-			"pane", app.active.id, "fgProc", fgProc, "shellPid", shellPid,
-			"containerType", ct, "containerID", cid, "dir", dir)
-		switch {
-		case (ct == "lxc" || ct == "incus") && cid != "" && shellPid > 0:
-			// `lxc exec` is the foreground process — reuse its exact cmdline
-			// so that `lxc exec xx -- su --login jsn` is preserved verbatim.
-			if args := fgProcessCmdline(shellPid); len(args) > 0 {
-				spawnArgs = args
-				L.Debug("splitActive: cloning lxc/incus exec cmdline", "spawnArgs", spawnArgs)
-			} else if isRunningContainer(cid, ct) {
-				spawnArgs = containerSpawnArgs(cid, ct, shell)
-				L.Debug("splitActive: lxc/incus fallback to containerSpawnArgs", "spawnArgs", spawnArgs)
-			}
-		case ct == "lxd" && shellPid > 0:
-			// "lxd" means we're inside an LXC container as seen from the host.
-			// Walk the process tree up from the foreground to find the
-			// `lxc exec` ancestor and reuse its full cmdline — this preserves
-			// any `su --login <user>` or other entry command.
-			fgPid := termFgPGID(shellPid)
-			if fgPid <= 0 {
-				fgPid = shellPid
-			}
-			if args := findLXCAncestorCmdline(fgPid); len(args) > 0 {
-				spawnArgs = args
-				L.Debug("splitActive: cloning lxc exec ancestor", "spawnArgs", spawnArgs)
-			} else {
-				L.Debug("splitActive: lxd container but no lxc ancestor found (bunk is inside container), using host shell")
-			}
-		case cid != "" && ct != "" && isRunningContainer(cid, ct):
-			spawnArgs = containerSpawnArgs(cid, ct, shell)
-			L.Debug("splitActive: using container context", "spawnArgs", spawnArgs)
-		case (ct == "podman" || ct == "docker") && shellPid > 0:
-			// "podman run <image>" — cid is an image name, not a running
-			// container ID.  Try two strategies:
-			// 1. Walk child process tree looking for libpod cgroup entry.
-			// 2. Ask podman/docker to list containers with the ancestor image.
-			fgPid := termFgPGID(shellPid)
-			if fgPid <= 0 {
-				fgPid = shellPid
-			}
-			containerID := findRunningContainerFromPID(fgPid)
-			L.Debug("splitActive: process-tree walk result", "containerID", containerID, "fgPid", fgPid)
-			if containerID == "" && cid != "" {
-				containerID = findContainerByAncestor(cid, ct)
-				L.Debug("splitActive: ancestor filter result", "containerID", containerID, "image", cid)
-			}
-			if containerID != "" {
-				spawnArgs = []string{ct, "exec", "-it", containerID, shell}
-				L.Debug("splitActive: resolved podman/docker run container", "containerID", containerID, "spawnArgs", spawnArgs)
-			} else {
-				L.Debug("splitActive: podman/docker run but could not resolve container ID", "fgPid", fgPid, "image", cid)
-			}
-		case (fgProc == "ssh" || fgProc == "mosh") && shellPid > 0:
-			if args := fgProcessCmdline(shellPid); len(args) > 0 {
-				spawnArgs = args
-				L.Debug("splitActive: cloning ssh/mosh session", "spawnArgs", spawnArgs)
-			} else {
-				L.Debug("splitActive: ssh/mosh detected but cmdline empty", "shellPid", shellPid)
-			}
-		case fgProc == "sudo" && shellPid > 0:
-			if args := fgProcessCmdline(shellPid); len(args) > 0 {
-				spawnArgs = args
-				L.Debug("splitActive: cloning sudo session", "spawnArgs", spawnArgs)
-			} else {
-				L.Debug("splitActive: sudo detected but cmdline empty", "shellPid", shellPid)
-			}
-		default:
-			L.Debug("splitActive: no context to inherit, using host shell")
-		}
-	}
+	// Inherit the working directory from the pane's foreground process.
+	dir := src.cwd()
+	c := src.splitContext()
 
 	newPane, err := NewPane(
 		app.nextID, nx, ny, nw, nh, app.scrollback, app.scrollbackBytes, dir, spawnArgs,
@@ -649,7 +719,7 @@ func (app *App) splitActive(inheritContext bool) {
 		app.cellAspect,
 	)
 	if err != nil {
-		L.Error("splitActive: NewPane", "err", err, "dir", dir, "spawnArgs", spawnArgs, "container", ct, "containerID", cid)
+		L.Error("splitActive: NewPane", "err", err, "dir", dir, "spawnArgs", spawnArgs, "container", c.ct, "containerID", c.cid)
 		return
 	}
 	L.Debug("splitActive: new pane created", "new_pane", newPane.id, "x", nx, "y", ny, "w", nw, "h", nh)

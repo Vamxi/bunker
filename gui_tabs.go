@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -69,6 +70,8 @@ func (gw *guiWin) newTab(dir string, command []string) *guiTab {
 	t := &guiTab{gw: gw, app: newTabApp(gw.cfg)}
 	app := t.app
 	view := newTermView(app, gw.cfg)
+	app.clipboard = gtkClipboard{view}
+	app.post = func(f func()) { coreglib.IdleAdd(f) }
 	t.view = view
 	view.onTitle = func(string) { t.refreshTitle() }
 	view.onSpawn = func(cols, rows int) (*Pane, error) {
@@ -652,6 +655,7 @@ func (gw *guiWin) updateStripVisibility() {
 // without output reaching the view). Stops when the window is gone.
 func (gw *guiWin) pollTitles() {
 	coreglib.TimeoutSecondsAdd(guiTitlePollSeconds, func() bool {
+		uiHeartbeat.Store(time.Now().UnixNano())
 		if gw.win == nil || len(gw.tabs) == 0 {
 			return false
 		}

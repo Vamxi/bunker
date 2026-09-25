@@ -29,12 +29,54 @@ import (
 	"bunker/internal/vt10x"
 )
 
-// copyToClipboard copies text to the clipboard via OSC 52 and native tools.
-func (app *App) copyToClipboard(text string) {
-	if text == "" {
-		return
-	}
+// clipboard is the system clipboard as a frontend provides it. The TUI uses
+// OSC 52 and the command-line tools (toolClipboard). The GUI uses GTK's,
+// because the window can own the clipboard itself: a blocking wl-paste would
+// then wait on the window's own main loop and freeze it.
+type clipboard interface {
+	// copy puts text on the clipboard.
+	copy(text string)
+	// paste calls deliver with the clipboard's text, or with the path of a
+	// temp file holding its image, possibly later. It reports false, without
+	// calling deliver, when the clipboard has neither.
+	paste(deliver func(text string)) bool
+}
 
+// toolClipboard is the TUI's clipboard.
+type toolClipboard struct{ app *App }
+
+func (c toolClipboard) copy(text string) { c.app.copyViaTools(text) }
+
+func (c toolClipboard) paste(deliver func(string)) bool {
+	text := readClipboard()
+	if text == "" {
+		// Terminal apps can't receive raw image data; they need a file path.
+		text = saveClipboardImage()
+	}
+	if text == "" {
+		return false
+	}
+	deliver(text)
+	return true
+}
+
+// clip returns the frontend's clipboard, or the TUI's by default.
+func (app *App) clip() clipboard {
+	if app.clipboard != nil {
+		return app.clipboard
+	}
+	return toolClipboard{app}
+}
+
+// copyToClipboard copies text to the clipboard.
+func (app *App) copyToClipboard(text string) {
+	if text != "" {
+		app.clip().copy(text)
+	}
+}
+
+// copyViaTools copies text via OSC 52 and native tools.
+func (app *App) copyViaTools(text string) {
 	// OSC 52: \e]52;c;<base64>\a
 	// 'c' selects the CLIPBOARD selection (as opposed to primary 'p').
 	encoded := base64.StdEncoding.EncodeToString([]byte(text))
@@ -134,23 +176,15 @@ func (app *App) pasteFromClipboard() bool {
 	if active == nil || active.isDead() {
 		return true // consumed, nothing useful to forward
 	}
-
-	text := readClipboard()
-	if text == "" {
-		// No text — check for image data and save to a temp file.
-		// Terminal apps can't receive raw image data; they need a file path.
-		if path := saveClipboardImage(); path != "" {
-			text = path
-		} else {
-			return false
+	return app.clip().paste(func(text string) {
+		if active.isDead() {
+			return
 		}
-	}
-
-	active.mu.Lock()
-	bracketed := active.term.Mode()&vt10x.ModeSetPaste != 0
-	active.mu.Unlock()
-	active.writeInput(pasteBytes(text, bracketed))
-	return true
+		active.mu.Lock()
+		bracketed := active.term.Mode()&vt10x.ModeSetPaste != 0
+		active.mu.Unlock()
+		active.writeInput(pasteBytes(text, bracketed))
+	})
 }
 
 // pasteBytes turns clipboard text into what a paste writes to the PTY.
@@ -212,6 +246,23 @@ func saveClipboardImage() string {
 	}
 	// X11 — xclip can read image targets.
 	return saveClipboardImageX11()
+}
+
+// savePastedPNG writes a pasted image to a temp file, named like the ones
+// the clipboard tools produce, and returns its path.
+func savePastedPNG(data []byte) (string, error) {
+	f, err := os.CreateTemp("", "bunk-paste-*.png")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	_, werr := f.Write(data)
+	if err := errors.Join(werr, f.Close()); err != nil {
+		if rerr := os.Remove(f.Name()); rerr != nil {
+			err = errors.Join(err, rerr)
+		}
+		return "", fmt.Errorf("write %s: %w", f.Name(), err)
+	}
+	return f.Name(), nil
 }
 
 func saveClipboardImageWl() string {

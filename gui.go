@@ -16,7 +16,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
@@ -83,7 +85,10 @@ func runGUI(configPath, themeName string, debug, trace bool, command []string) e
 		windows = append(windows, gw)
 		gw.build(command)
 	})
+	stopWatch := make(chan struct{})
+	go watchUIThread(&uiHeartbeat, guiStallCheck, guiStallAfter, reportUIStall, stopWatch)
 	code := gapp.Run([]string{os.Args[0]})
+	close(stopWatch)
 
 	for _, gw := range windows {
 		gw.closeAllTabs()
@@ -422,3 +427,51 @@ func (gw *guiWin) hideBanner() {
 // sleepRenderSettle lets erase-then-redraw bursts land in one frame, as the
 // TUI render loop does.
 func sleepRenderSettle() { time.Sleep(renderSettleInterval) }
+
+// The title poll beats uiHeartbeat once a second on the GTK thread. If it
+// stops for guiStallAfter, something blocked the thread (a synchronous
+// command, a lock held too long) and the window is frozen: the stacks
+// logged then show what it is waiting on.
+const (
+	guiStallCheck = 2 * time.Second
+	guiStallAfter = 5 * time.Second
+)
+
+var uiHeartbeat atomic.Int64
+
+// watchUIThread reports each stall of the heartbeat once, with every
+// goroutine's stack, and again when the thread recovers.
+func watchUIThread(beat *atomic.Int64, every, stallAfter time.Duration, report func(stalled time.Duration, stacks []byte), done <-chan struct{}) {
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	stalled := false
+	for {
+		select {
+		case <-done:
+			return
+		case now := <-tick.C:
+			last := beat.Load()
+			if last == 0 {
+				continue // the window has not started beating yet
+			}
+			behind := now.Sub(time.Unix(0, last))
+			switch {
+			case behind >= stallAfter && !stalled:
+				stalled = true
+				buf := make([]byte, 1<<20)
+				report(behind, buf[:runtime.Stack(buf, true)])
+			case behind < stallAfter && stalled:
+				stalled = false
+				report(0, nil)
+			}
+		}
+	}
+}
+
+func reportUIStall(stalled time.Duration, stacks []byte) {
+	if stacks == nil {
+		L.Warn("gui: window responding again")
+		return
+	}
+	L.Warn("gui: window not responding", "for", stalled.Round(time.Second), "goroutines", string(stacks))
+}
