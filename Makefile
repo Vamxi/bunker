@@ -82,7 +82,7 @@ release-version:
 
 release: release-version build
 	tar -czf bin/$(BINARY)_linux_amd64.tar.gz --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_linux_amd64
-	grm release Vamxi/$(BINARY) \
+	GITHUB_TOKEN="$${GITHUB_TOKEN:-$$(gh auth token)}" grm release Vamxi/$(BINARY) \
 		-f bin/$(BINARY)_linux_amd64.tar.gz \
 		-t "v$(VERSION)"
 
