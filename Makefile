@@ -1,8 +1,8 @@
 BINARY  := bunker
 PWD     := $(shell pwd)
 PKG     := ./...
-VERSION := 0.0.0
-MONOVA  := $(shell which monova 2> /dev/null)
+# Releases pass the version explicitly: make release VERSION=0.2.0
+VERSION ?= 0.0.0
 LDFLAGS  = -ldflags="-X main.Version=$(VERSION)"
 
 # Formatting, tests, and binaries share files even with make -j.
@@ -14,14 +14,6 @@ export PATH := $(PATH):$(shell go env GOPATH)/bin
 # in gotk4's generated marshallers. Keep checkptr on for bunker's own code.
 RACEFLAGS := -race -gcflags='github.com/diamondburned/gotk4/pkg/...=-d=checkptr=0'
 BENCHSTAT := go run golang.org/x/perf/cmd/benchstat@latest
-
-version:
-ifdef MONOVA
-override VERSION = $(shell monova)
-override LDFLAGS = -ldflags="-X main.Version=$(VERSION)"
-else
-	$(info "Install monova with: grm install jsnjack/monova")
-endif
 
 # GUI tests run on a private headless compositor when mutter is installed,
 # so they work with the screen locked and never touch the desktop session.
@@ -79,16 +71,20 @@ standards:
 bin/$(BINARY): bin/$(BINARY)_linux_amd64
 	cp $< $@
 	ln -sf bin/$(BINARY) $(BINARY)
-bin/$(BINARY)_linux_amd64: test version
+bin/$(BINARY)_linux_amd64: test
 	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $@
 
 build: bin/$(BINARY)
 
-release: build
+release-version:
+	@case "$(VERSION)" in 0.0.0) echo "usage: make release VERSION=x.y.z"; exit 1;; esac
+	@if gh release view "v$(VERSION)" -R Vamxi/$(BINARY) >/dev/null 2>&1; then echo "v$(VERSION) is already released"; exit 1; fi
+
+release: release-version build
 	tar -czf bin/$(BINARY)_linux_amd64.tar.gz --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_linux_amd64
 	grm release Vamxi/$(BINARY) \
 		-f bin/$(BINARY)_linux_amd64.tar.gz \
-		-t "v`monova`"
+		-t "v$(VERSION)"
 
 run: test
 	go build -o $(BINARY) .
@@ -102,4 +98,4 @@ install: build
 clean:
 	rm -rf bin/ $(BINARY)
 
-.PHONY: version build release install test test-gui bench bench-baseline vet fmt lint check standards run clean
+.PHONY: build release release-version install test test-gui bench bench-baseline vet fmt lint check standards run clean
