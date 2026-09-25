@@ -133,13 +133,19 @@ func guiStartProfile() func() {
 		L.Error("cpuprofile: create", "err", err)
 		return func() {}
 	}
+	closeFile := func() {
+		if err := f.Close(); err != nil {
+			L.Error("cpuprofile: close", "err", err)
+		}
+	}
 	if err := pprof.StartCPUProfile(f); err != nil {
-		f.Close() //nolint:errcheck
+		L.Error("cpuprofile: start", "err", err)
+		closeFile()
 		return func() {}
 	}
 	return func() {
 		pprof.StopCPUProfile()
-		f.Close() //nolint:errcheck
+		closeFile()
 	}
 }
 

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -40,24 +41,28 @@ func bunkLogo() string {
 func init() {
 	rootCmd.AddCommand(tuiCmd)
 	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path (default: ~/.config/bunker/config.toml)")
-	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: terminal, default, solarized-dark, dracula, nord")
-	rootCmd.PersistentFlags().BoolVarP(&flagDebug, "debug", "d", false, "enable debug-level logging")
-	rootCmd.PersistentFlags().BoolVar(&flagTrace, "trace", false, "enable trace-level logging (logs raw PTY byte chunks)")
+	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "theme name (see bunker themes)")
+	// Declared here so cobra does not add a -v shorthand.
+	rootCmd.Flags().Bool("version", false, "Print the version and exit.")
+	rootCmd.PersistentFlags().BoolVarP(&flagDebug, "debug", "d", false, "Debug-level logging on stderr.")
+	rootCmd.PersistentFlags().BoolVar(&flagTrace, "trace", false, "Trace-level logs to "+defaultTraceFile+" (truncated each run; includes terminal output).")
 
 	// Override help to load the config first so effective (user-overridden)
 	// keybindings are shown rather than built-in defaults.
 	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		cfg, err := LoadConfig(flagConfig, flagTheme)
 		if err != nil {
-			fmt.Fprintln(cmd.ErrOrStderr(), err) //nolint:errcheck // help runs before terminal initialization
+			cmd.PrintErrln(err)
 			return
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\n%s\nUsage:\n  %s\n\nFlags:\n%s", //nolint:errcheck // help text write
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\n%s\nUsage:\n  %s\n\nFlags:\n%s",
 			bunkLogo(),
 			keybindingsHelpText(&cfg.Keybindings),
 			cmd.UseLine(),
 			cmd.Flags().FlagUsages(),
-		)
+		); err != nil {
+			L.Log(context.Background(), LevelTrace, "help: write", "err", err)
+		}
 	})
 }
 
@@ -104,23 +109,10 @@ func run(configPath, themeName string, debug, trace bool) error {
 		os.Exit(1)
 	}
 
-	// --trace / --debug override config log level.
-	logLevel := cfg.LogLevel
-	switch {
-	case trace:
-		logLevel = "trace"
-	case debug:
-		logLevel = "debug"
-	}
-	// Only write to the log file when debug/trace is explicitly requested.
-	logFile := ""
-	if debug || trace {
-		logFile = cfg.LogFile
-	}
-	cleanup := initLogger(logFile, logLevel)
+	cleanup := initLogger(logOptions{Debug: debug, Trace: trace, TracePath: cfg.LogFile, Level: cfg.LogLevel})
 	defer cleanup()
 
-	L.Info("bunk starting", "theme", themeName, "log_level", logLevel)
+	L.Info("bunk starting", "theme", themeName)
 
 	// Query cell aspect ratio BEFORE screen.Init() — after Init tcell owns
 	// stdin and we must not read from it directly.
@@ -134,10 +126,10 @@ func run(configPath, themeName string, debug, trace bool) error {
 
 	screen, err := tcell.NewScreen()
 	if err != nil {
-		return err
+		return fmt.Errorf("open terminal: %w", err)
 	}
 	if err := screen.Init(); err != nil {
-		return err
+		return fmt.Errorf("initialise terminal: %w", err)
 	}
 	screen.SetStyle(tcell.StyleDefault.Background(cfg.Theme.bg).Foreground(cfg.Theme.fg))
 	screen.HideCursor()
@@ -175,7 +167,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 	)
 	if err != nil {
 		screen.Fini()
-		return err
+		return fmt.Errorf("start the first pane: %w", err)
 	}
 	app.nextID++
 	app.root = newLeaf(p, 0, 0, w, h)
@@ -202,12 +194,20 @@ func run(configPath, themeName string, debug, trace bool) error {
 		"\033]112\007" + // restore outer terminal cursor colour
 		"\033[0m" + // reset all SGR attributes
 		"\033[2J\033[H" // clear screen + cursor home
+	out := os.Stdout
 	if tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0); err == nil {
-		tty.WriteString(vtreset) //nolint:errcheck
-		tty.Close()              //nolint:errcheck // /dev/tty close on shutdown path
-	} else {
-		os.Stdout.WriteString(vtreset) //nolint:errcheck
+		out = tty
+		defer func() {
+			if err := tty.Close(); err != nil {
+				L.Log(context.Background(), LevelTrace, "restore terminal: close tty", "err", err)
+			}
+		}()
 	}
-	exec.Command("stty", "sane").Run() //nolint:errcheck
+	if _, err := out.WriteString(vtreset); err != nil {
+		L.Log(context.Background(), LevelTrace, "restore terminal: reset", "err", err)
+	}
+	if err := exec.Command("stty", "sane").Run(); err != nil {
+		L.Log(context.Background(), LevelTrace, "restore terminal: stty sane", "err", err)
+	}
 	return nil
 }

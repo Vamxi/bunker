@@ -226,7 +226,7 @@ func (t *State) oscColorResponse(j, num int) {
 	}
 
 	r, g, b := rgb(j)
-	fmt.Fprintf(t.w, "\033]%d;rgb:%02x%02x/%02x%02x/%02x%02x\007", num, r, r, g, g, b, b) //nolint:errcheck // reply write to host PTY
+	t.reply(fmt.Appendf(nil, "\033]%d;rgb:%02x%02x/%02x%02x/%02x%02x\007", num, r, r, g, g, b, b))
 }
 
 func (t *State) osc4ColorResponse(j int) {
@@ -241,7 +241,7 @@ func (t *State) osc4ColorResponse(j int) {
 	}
 
 	r, g, b := rgb(j)
-	fmt.Fprintf(t.w, "\033]4;%d;rgb:%02x%02x/%02x%02x/%02x%02x\007", j, r, r, g, g, b, b) //nolint:errcheck // reply write to host PTY
+	t.reply(fmt.Appendf(nil, "\033]4;%d;rgb:%02x%02x/%02x%02x/%02x%02x\007", j, r, r, g, g, b, b))
 }
 
 func rgb(j int) (r, g, b int) {

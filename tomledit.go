@@ -8,6 +8,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,7 +28,7 @@ func writeConfigKey(path, section, key, literal string) (bool, error) {
 	case os.IsNotExist(err):
 		data = []byte(DefaultConfigTOML())
 	case err != nil:
-		return false, err
+		return false, fmt.Errorf("read config: %w", err)
 	}
 	next := setTOMLKey(string(data), section, key, literal)
 	if next == string(data) {
@@ -38,15 +39,14 @@ func writeConfigKey(path, section, key, literal string) (bool, error) {
 		return false, fmt.Errorf("refusing to write invalid config: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return false, err
+		return false, fmt.Errorf("config directory: %w", err)
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, []byte(next), 0o600); err != nil {
-		return false, err
+		return false, fmt.Errorf("write config: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp) //nolint:errcheck
-		return false, err
+		return false, errors.Join(fmt.Errorf("replace %s: %w", path, err), os.Remove(tmp))
 	}
 	return true, nil
 }

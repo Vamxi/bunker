@@ -29,6 +29,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"strconv"
 
 	"bunker/internal/vt10x"
@@ -292,7 +293,9 @@ func reflowInject(term vt10x.Terminal, rows [][]vt10x.Glyph) {
 		}
 	}
 	buf.WriteString("\x1b[0m")
-	term.Write(buf.Bytes()) //nolint:errcheck
+	if _, err := term.Write(buf.Bytes()); err != nil {
+		L.Log(context.Background(), LevelTrace, "reflow: write rows", "err", err)
+	}
 }
 
 // emitSGR writes a complete SGR escape sequence for the given glyph's

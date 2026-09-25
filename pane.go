@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -670,17 +671,17 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 			// sequences arrive in one chunk, the pre-entry cursor moves
 			// are missed and we save y=0 instead of the actual prompt row.
 			if i > 0 {
-				p.term.Write(chunk[:i]) //nolint:errcheck
+				p.feed(chunk[:i])
 			}
 			cur := p.term.Cursor()
 			p.altEntryCursorX, p.altEntryCursorY = cur.X, cur.Y
 			L.Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen entry", "pane", p.id, "seq", seq, "cursor_x", cur.X, "cursor_y", cur.Y)
 
 			end := i + len(b)
-			p.term.Write(chunk[i:end])            //nolint:errcheck
-			p.term.Write([]byte("\x1b[2J\x1b[H")) //nolint:errcheck
+			p.feed(chunk[i:end])
+			p.feed([]byte("\x1b[2J\x1b[H"))
 			if end < len(chunk) {
-				p.term.Write(chunk[end:]) //nolint:errcheck
+				p.feed(chunk[end:])
 			}
 			wrote = true
 		}
@@ -698,23 +699,23 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 			b := []byte(seq)
 			end := i + len(b)
 			exitSplitAt = end
-			p.term.Write(chunk[:end])       //nolint:errcheck
-			p.term.Write([]byte("\x1b[0m")) //nolint:errcheck
+			p.feed(chunk[:end])
+			p.feed([]byte("\x1b[0m"))
 			// Restore primary cursor here — before any trailing output
 			// in this chunk (e.g. prompt text) — so the prompt text
 			// advances the cursor naturally to the correct position.
 			L.Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen exit", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
 			curRestore := fmt.Sprintf("\x1b[%d;%dH", p.altEntryCursorY+1, p.altEntryCursorX+1)
 			L.Log(context.Background(), LevelTrace, "captureAndWrite: injecting curRestore", "pane", p.id, "seq", curRestore)
-			p.term.Write([]byte(curRestore)) //nolint:errcheck
+			p.feed([]byte(curRestore))
 			if end < len(chunk) {
-				p.term.Write(chunk[end:]) //nolint:errcheck
+				p.feed(chunk[end:])
 			}
 			wrote = true
 		}
 	}
 	if !wrote {
-		p.term.Write(chunk) //nolint:errcheck
+		p.feed(chunk)
 	}
 
 	// When alt screen exits, append the chunk to rawBuf (skipped above because
@@ -739,12 +740,12 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 			// across two reads).  curRestore was not injected above, so do it
 			// now before any further output from this chunk.
 			p.rawBuf = append(p.rawBuf, chunk...)
-			p.term.Write([]byte(sgrReset)) //nolint:errcheck
+			p.feed([]byte(sgrReset))
 			p.rawBuf = append(p.rawBuf, sgrReset...)
 			L.Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen exit (fallback)", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
 			curRestore := fmt.Sprintf("\x1b[%d;%dH", p.altEntryCursorY+1, p.altEntryCursorX+1)
 			L.Log(context.Background(), LevelTrace, "captureAndWrite: injecting curRestore (fallback)", "pane", p.id, "seq", curRestore)
-			p.term.Write([]byte(curRestore)) //nolint:errcheck
+			p.feed([]byte(curRestore))
 		}
 		p.trimRawHistory()
 
@@ -800,13 +801,13 @@ func (p *Pane) replyTerminalQuery(q terminalQuery) {
 	case terminalQueryDECRQSS:
 		p.writeInput([]byte(p.term.StatusString(q.payload)))
 	case terminalQueryDA:
-		p.ptmx.Write([]byte("\x1b[?62;1;2;4;6;9;15;22c")) //nolint:errcheck
+		p.writePTY([]byte("\x1b[?62;1;2;4;6;9;15;22c"))
 		L.Log(context.Background(), LevelTrace, "captureAndWrite: DA response", "pane", p.id)
 	case terminalQueryDA2:
-		p.ptmx.Write([]byte("\x1b[>0;279;0c")) //nolint:errcheck
+		p.writePTY([]byte("\x1b[>0;279;0c"))
 		L.Log(context.Background(), LevelTrace, "captureAndWrite: DA2 response", "pane", p.id)
 	case terminalQueryXTVERSION:
-		p.ptmx.Write([]byte("\x1bP>|VTE(8203)\x1b\\")) //nolint:errcheck
+		p.writePTY([]byte("\x1bP>|VTE(8203)\x1b\\"))
 		L.Log(context.Background(), LevelTrace, "captureAndWrite: XTVERSION response", "pane", p.id)
 	case terminalQueryXTGETTCAP:
 		flags := 0
@@ -815,7 +816,7 @@ func (p *Pane) replyTerminalQuery(q terminalQuery) {
 		}
 		for _, hexCap := range strings.Split(q.payload, ";") {
 			if resp := xtgettcapResponse(hexCap, flags, p.term.Mode()); resp != "" {
-				p.ptmx.Write([]byte(resp)) //nolint:errcheck
+				p.writePTY([]byte(resp))
 			}
 		}
 		L.Log(context.Background(), LevelTrace, "captureAndWrite: XTGETTCAP response", "pane", p.id, "payload", q.payload)
@@ -826,12 +827,12 @@ func (p *Pane) replyTerminalQuery(q terminalQuery) {
 			prefix = "?"
 		}
 		resp := fmt.Sprintf("\x1b[%s%d;%dR", prefix, y+1, x+1)
-		p.ptmx.Write([]byte(resp)) //nolint:errcheck
+		p.writePTY([]byte(resp))
 		L.Log(context.Background(), LevelTrace, "captureAndWrite: CPR response", "pane", p.id, "row", y+1, "col", x+1)
 	case terminalQueryDECRQM:
 		status := p.term.QueryPrivateMode(q.mode)
 		resp := fmt.Sprintf("\x1b[?%d;%c$y", q.mode, status)
-		p.ptmx.Write([]byte(resp)) //nolint:errcheck
+		p.writePTY([]byte(resp))
 		L.Log(context.Background(), LevelTrace, "captureAndWrite: DECRQM response", "pane", p.id, "mode", q.mode, "status", string(status))
 	case terminalQueryOSC10:
 		p.replyOSCColorQuery(10, vt10x.DefaultFG, p.themeFGColor)
@@ -848,7 +849,7 @@ func (p *Pane) replyOSCColorQuery(num int, def vt10x.Color, fallback string) {
 		return
 	}
 	resp := fmt.Sprintf("\x1b]%d;%s\x1b\\", num, color)
-	p.ptmx.Write([]byte(resp)) //nolint:errcheck
+	p.writePTY([]byte(resp))
 	L.Log(context.Background(), LevelTrace, "captureAndWrite: OSC color response", "pane", p.id, "osc_num", num, "color", color)
 }
 
@@ -1024,8 +1025,8 @@ func dcsSequenceEnd(data []byte, start int) int {
 // waitForExit blocks until the shell process exits (or the app shuts down),
 // then marks the pane dead and notifies the app so it can remove the pane.
 func (p *Pane) waitForExit(paneDead chan *Pane, done chan struct{}) {
-	p.cmd.Wait() //nolint:errcheck
-	L.Debug("pane process exited", "id", p.id)
+	err := p.cmd.Wait() // a non-zero exit status is ordinary here
+	L.Debug("pane process exited", "id", p.id, "status", err)
 	p.mu.Lock()
 	p.dead = true
 	p.mu.Unlock()
@@ -1042,10 +1043,26 @@ func (p *Pane) waitForExit(paneDead chan *Pane, done chan struct{}) {
 	}
 }
 
+// feed writes b to the emulator. vt10x only fails once the terminal is
+// closed, so a failure is logged for --trace and otherwise ignored.
+func (p *Pane) feed(b []byte) {
+	if _, err := p.term.Write(b); err != nil {
+		L.Log(context.Background(), LevelTrace, "pane: emulator write", "pane", p.id, "err", err)
+	}
+}
+
+// writePTY sends b to the program. It fails only after the program has
+// exited, which waitForExit handles, so a failure is logged for --trace.
+func (p *Pane) writePTY(b []byte) {
+	if _, err := p.ptmx.Write(b); err != nil {
+		L.Log(context.Background(), LevelTrace, "pane: PTY write", "pane", p.id, "err", err)
+	}
+}
+
 // writeInput sends raw bytes (encoded keystrokes or mouse sequences) to the
 // shell via the PTY master.
 func (p *Pane) writeInput(data []byte) {
-	p.ptmx.Write(data) //nolint:errcheck
+	p.writePTY(data)
 }
 
 // scrollUp scrolls the view n lines toward the past (increases sbOff).
@@ -1144,7 +1161,7 @@ func (p *Pane) resizePTYOnly(x, y, w, h int) {
 	// The vt10x resize is cheap for alt-screen (no rawBuf replay), so
 	// do it here before sending SIGWINCH.
 	if p.term.Mode()&vt10x.ModeAltScreen != 0 {
-		p.term.Write([]byte("\x1b[0m")) //nolint:errcheck
+		p.feed([]byte("\x1b[0m"))
 		p.term.Resize(w-1, h)
 	}
 	cw, ch := p.term.CellPixels()
@@ -1178,7 +1195,7 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 		// with default colours instead of the TUI app's current style.
 		// Without this, exiting the alt-screen app after a resize leaks
 		// its background colour into the normal screen's expanded area.
-		p.term.Write([]byte("\x1b[0m")) //nolint:errcheck
+		p.feed([]byte("\x1b[0m"))
 		p.term.Resize(newCols, newRows)
 		return
 	}
@@ -1217,7 +1234,9 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 	cw, ch := p.term.CellPixels()
 	scratch := vt10x.New(vt10x.WithSize(newCols, replayH), vt10x.WithCellPixels(cw, ch), vt10x.WithGraphicsState(p.term.GraphicsState()), vt10x.WithGraphicsViewportRows(newRows))
 	// Prepend a full SGR reset so trimmed attribute state doesn't bleed.
-	scratch.Write(append([]byte("\x1b[0m"), replay...)) //nolint:errcheck
+	if _, err := scratch.Write(append([]byte("\x1b[0m"), replay...)); err != nil {
+		L.Log(context.Background(), LevelTrace, "reflow: replay", "pane", p.id, "err", err)
+	}
 
 	contentRows := findContentRows(scratch, newCols, replayH)
 
@@ -1525,7 +1544,9 @@ func (p *Pane) close() {
 	L.Debug("pane close", "pane", p.id)
 	p.closePTX()
 	if p.cmd.Process != nil {
-		p.cmd.Process.Signal(syscall.SIGHUP) //nolint:errcheck
+		if err := p.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+			L.Log(context.Background(), LevelTrace, "pane close: hangup", "pane", p.id, "err", err)
+		}
 	}
 }
 
@@ -1562,7 +1583,9 @@ func (p *Pane) closePTX() {
 		p.ptmxMu.Lock()
 		p.ptmxClosed = true
 		p.ptmxMu.Unlock()
-		p.ptmx.Close() //nolint:errcheck // PTY master close on shutdown
+		if err := p.ptmx.Close(); err != nil {
+			L.Log(context.Background(), LevelTrace, "pane close: PTY", "pane", p.id, "err", err)
+		}
 	})
 }
 
@@ -1571,7 +1594,9 @@ func (p *Pane) setPTYSize(ws *pty.Winsize) {
 	p.ptmxMu.Lock()
 	defer p.ptmxMu.Unlock()
 	if p.ptmx != nil && !p.ptmxClosed {
-		pty.Setsize(p.ptmx, ws) //nolint:errcheck
+		if err := pty.Setsize(p.ptmx, ws); err != nil {
+			L.Log(context.Background(), LevelTrace, "pane resize: PTY", "pane", p.id, "err", err)
+		}
 	}
 }
 
@@ -1683,6 +1708,20 @@ func (p *Pane) selText() string {
 	return buf.String()
 }
 
+// leadingInt parses the decimal number that b starts with, or returns def
+// when b does not start with one or it overflows.
+func leadingInt(b []byte, def int) int {
+	n := 0
+	for n < len(b) && b[n] >= '0' && b[n] <= '9' {
+		n++
+	}
+	v, err := strconv.Atoi(string(b[:n]))
+	if err != nil {
+		return def
+	}
+	return v
+}
+
 // handleKittyKeyboard processes kitty keyboard protocol sequences in the
 // byte stream emitted by pane applications, strips them before vt10x sees
 // them (to prevent DECRC misinterpretation), and responds to queries.
@@ -1744,7 +1783,7 @@ func (p *Pane) handleKittyKeyboard(chunk []byte) []byte {
 				if len(p.kittyStack) > 0 {
 					flags = p.kittyStack[len(p.kittyStack)-1]
 				}
-				fmt.Fprintf(p.ptmx, "\x1b[?%du", flags) //nolint:errcheck // reply write to PTY; nothing actionable
+				p.writePTY(fmt.Appendf(nil, "\x1b[?%du", flags))
 				newI = j + 2
 				stripped = true
 			}
@@ -1760,11 +1799,10 @@ func (p *Pane) handleKittyKeyboard(chunk []byte) []byte {
 				k++
 			}
 			if k < len(chunk) && chunk[k] == 'u' {
-				flags := 0
-				fmt.Sscanf(string(chunk[j+1:k]), "%d", &flags) //nolint:errcheck // best-effort parse of the first param; flags defaults to 0
-				mode := 1
+				flags := leadingInt(chunk[j+1:k], 0)
+				mode := 1 // omitted mode means replace
 				if sep := bytes.IndexByte(chunk[j+1:k], ';'); sep >= 0 {
-					fmt.Sscanf(string(chunk[j+2+sep:k]), "%d", &mode) //nolint:errcheck // omitted mode defaults to replacement
+					mode = leadingInt(chunk[j+2+sep:k], mode)
 				}
 				if intro == '=' && len(p.kittyStack) == 0 {
 					p.kittyStack = append(p.kittyStack, 0)
@@ -1798,8 +1836,7 @@ func (p *Pane) handleKittyKeyboard(chunk []byte) []byte {
 				k++
 			}
 			if k < len(chunk) && chunk[k] == 'u' {
-				count := 1
-				fmt.Sscanf(string(chunk[j+1:k]), "%d", &count) //nolint:errcheck // best-effort parse; count defaults to 1
+				count := leadingInt(chunk[j+1:k], 1)
 				if count < 1 {
 					count = 1
 				}

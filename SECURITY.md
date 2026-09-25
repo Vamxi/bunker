@@ -21,7 +21,7 @@ run code, read your data, or reach files outside what you asked for.
 | Titles | Control characters and invalid UTF-8 are stripped; length is capped. Labels show text, never markup. | `render_test.go` |
 | Graphics | Kitty file and shared-memory transfers are rejected; transfer, image, and cache sizes are capped. | `graphics_test.go`, `internal/graphics` |
 | Escape parsing | Bounded buffers for OSC/DCS/APC, grapheme length, and history. | `ptystream_test.go`, `internal/vt10x` |
-| Files | Config is written atomically with mode 0600. `--debug`/`--trace` logs go to `~/.local/state/bunker/` (0600, symlinks not followed). | `tomledit_test.go` |
+| Files | Config is written atomically with mode 0600. `--trace` writes `/tmp/bunker.log` only if it is a regular file owned by you (never through a symlink, never blocking on a FIFO), at mode 0600; `--debug` goes to stderr. | `tomledit_test.go`, `logger_test.go` |
 | Processes | Programs start without a shell (`exec` with arguments). | — |
 
 ## Accepted on purpose
@@ -31,7 +31,7 @@ run code, read your data, or reach files outside what you asked for.
 - **Context splits (Alt+F1)** re-run the focused pane's own command line
   (ssh, sudo, container exec) from `/proc`: your processes, your privileges.
 - **Trace logs** (`--trace`) record terminal output, which can include
-  secrets printed on screen. They are off by default and private.
+  secrets printed on screen. They are off by default and readable only by you.
 - **Debug hooks** (`BUNKER_SCREENSHOT`, `BUNKER_CPUPROFILE`, …) write where
   the environment says; they only act when those variables are set.
 

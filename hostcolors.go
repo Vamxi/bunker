@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -75,14 +76,22 @@ func probeHostOSCColors() hostOSCColors {
 		L.Debug("probeHostOSCColors: open /dev/tty", "err", err)
 		return hostOSCColors{}
 	}
-	defer tty.Close() //nolint:errcheck // /dev/tty close on shutdown path
+	defer func() {
+		if err := tty.Close(); err != nil {
+			L.Log(context.Background(), LevelTrace, "probeHostOSCColors: close tty", "err", err)
+		}
+	}()
 
 	oldState, err := term.MakeRaw(int(tty.Fd()))
 	if err != nil {
 		L.Debug("probeHostOSCColors: raw mode", "err", err)
 		return hostOSCColors{}
 	}
-	defer term.Restore(int(tty.Fd()), oldState) //nolint:errcheck
+	defer func() {
+		if err := term.Restore(int(tty.Fd()), oldState); err != nil {
+			L.Warn("probeHostOSCColors: restore tty mode", "err", err)
+		}
+	}()
 
 	queries := []int{10, 11, 12}
 	for _, num := range queries {

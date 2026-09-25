@@ -560,11 +560,6 @@ func (t *State) ChangeMask() ChangeFlag {
 }
 */
 
-// Changed returns true if change has occured.
-func (t *State) Changed(change ChangeFlag) bool {
-	return t.changed&change != 0
-}
-
 // ConsumeDirty returns which rows have been written to since the last call,
 // then clears the dirty state.  Returns nil, false when nothing is dirty
 // (zero allocation — the common case for idle panes).

@@ -5,6 +5,12 @@ matching section as the GitHub release notes.
 
 ## Unreleased
 
+### Changed
+
+- `--debug` now logs to stderr, and `--trace` writes `/tmp/bunker.log`
+  (truncated on every start). The trace file is only used if it is a
+  regular file you own. Without flags, only warnings and errors are logged.
+
 ### Faster
 
 - Plain output about 40% faster (`seq 1 2000000`: 0.83 s → 0.48 s):

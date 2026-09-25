@@ -25,6 +25,14 @@ func (t *State) CellPixels() (int, int) { return t.cellWidth, t.cellHeight }
 // GraphicsState returns an isolated snapshot of reusable image data.
 func (t *State) GraphicsState() *graphics.Decoder { return t.graphics.Clone() }
 
+// reply answers a query on the writer the program reads. A failed write
+// means the program is gone; it is logged at trace level.
+func (t *State) reply(b []byte) {
+	if _, err := t.w.Write(b); err != nil {
+		slog.Log(context.Background(), slog.LevelDebug-4, "reply write", "err", err)
+	}
+}
+
 func (t *State) handleGraphics(typ rune, body []byte) {
 	if t.graphics == nil {
 		t.graphics = &graphics.Decoder{}

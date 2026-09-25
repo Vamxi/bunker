@@ -90,6 +90,42 @@ intended change, `make bench-baseline` and commit the new baseline. Timings
 depend on the machine; compare runs from the same one. Allocation counts do
 not, which is why the allocation guards are tests.
 
+## Test recipes
+
+Building blocks for tests of the pane model and the TUI renderer.
+
+**Minimal Pane (no PTY):**
+```go
+term := vt10x.New(vt10x.WithSize(cols, rows))
+p := &Pane{
+    term:            term,
+    cmd:             &exec.Cmd{},  // non-nil prevents cwd() nil-deref in emitTitle
+    x: 0, y: 0, w: cols, h: rows,
+    scrollbackLines: 100,
+    sb:              sbRing{maxLines: 100},
+}
+```
+
+**Simulation screen:**
+```go
+scr := tcell.NewSimulationScreen("UTF-8")
+scr.Init()
+defer scr.Fini()
+scr.SetSize(w, h)
+// scr.GetContent(x, y) → (mainc rune, combc []rune, style, width)
+```
+
+**Minimal App for calling render():**
+```go
+app := &App{
+    screen: scr,
+    root:   &Node{pane: p},
+    active: p,
+    oscBuf: newOSCBuffer(),
+    theme:  testTheme(),
+}
+```
+
 ## Manual checks
 
 - `BUNKER_SCREENSHOT=out.png bunker -- btop` renders the window to a PNG;

@@ -17,7 +17,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -245,12 +247,7 @@ func saveClipboardImageWl() string {
 	cmd := exec.Command("wl-paste", "--no-newline", "--type", mime)
 	cmd.Stdout = f
 	runErr := cmd.Run()
-	f.Close() //nolint:errcheck // temp file; reopened by caller via path
-	if runErr != nil {
-		os.Remove(f.Name()) //nolint:errcheck // best-effort temp-file cleanup
-		return ""
-	}
-	return f.Name()
+	return finishPasteFile(f, runErr)
 }
 
 func saveClipboardImageX11() string {
@@ -283,16 +280,25 @@ func saveClipboardImageX11() string {
 	cmd := exec.Command("xclip", "-selection", "clipboard", "-o", "-target", target)
 	cmd.Stdout = f
 	runErr := cmd.Run()
-	f.Close() //nolint:errcheck // temp file; reopened by caller via path
-	if runErr != nil {
-		os.Remove(f.Name()) //nolint:errcheck // best-effort temp-file cleanup
-		return ""
-	}
-	return f.Name()
+	return finishPasteFile(f, runErr)
 }
 
 // tryClipboardCmd runs cmd with text piped to stdin and returns true on success.
 func tryClipboardCmd(cmd *exec.Cmd, text string) bool {
 	cmd.Stdin = strings.NewReader(text)
 	return cmd.Run() == nil
+}
+
+// finishPasteFile closes the temp file a clipboard image was written to and
+// returns its path, or removes it and returns "" when the copy failed.
+func finishPasteFile(f *os.File, runErr error) string {
+	err := errors.Join(runErr, f.Close())
+	if err == nil {
+		return f.Name()
+	}
+	L.Log(context.Background(), LevelTrace, "clipboard: save image", "err", err)
+	if err := os.Remove(f.Name()); err != nil {
+		L.Log(context.Background(), LevelTrace, "clipboard: remove temp file", "err", err)
+	}
+	return ""
 }

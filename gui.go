@@ -67,21 +67,11 @@ func runGUI(configPath, themeName string, debug, trace bool, command []string) e
 	if err != nil {
 		return err
 	}
-	logLevel, logFile := cfg.LogLevel, ""
-	switch {
-	case trace:
-		logLevel = "trace"
-	case debug:
-		logLevel = "debug"
-	}
-	if debug || trace {
-		logFile = cfg.LogFile
-	}
-	cleanup := initLogger(logFile, logLevel)
+	cleanup := initLogger(logOptions{Debug: debug, Trace: trace, TracePath: cfg.LogFile, Level: cfg.LogLevel, Stderr: os.Stderr})
 	defer cleanup()
 
 	cfg = guiConfig(cfg)
-	L.Info("bunker starting", "config", cfg.Path, "font", cfg.Font, "log_level", logLevel)
+	L.Info("bunker starting", "config", cfg.Path, "font", cfg.Font)
 
 	stopProfile := guiStartProfile()
 	defer stopProfile()
@@ -397,7 +387,9 @@ func (gw *guiWin) openConfigFile() {
 	path := gw.path()
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err == nil {
-			os.WriteFile(path, []byte(DefaultConfigTOML()), 0o600) //nolint:errcheck
+			if err := os.WriteFile(path, []byte(DefaultConfigTOML()), 0o600); err != nil {
+				L.Warn("gui: write default config", "path", path, "err", err)
+			}
 		}
 	}
 	launcher := gtk.NewFileLauncher(gio.NewFileForPath(path))

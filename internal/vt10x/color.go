@@ -32,8 +32,3 @@ const (
 
 // Color maps to the ANSI colors [0, 16) and the xterm colors [16, 256).
 type Color uint32
-
-// ANSI returns true if Color is within [0, 16).
-func (c Color) ANSI() bool {
-	return (c < 16)
-}

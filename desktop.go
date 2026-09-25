@@ -29,7 +29,7 @@ func writeIcons(root string) error {
 	for _, n := range iconSizes {
 		data, err := iconFS.ReadFile(fmt.Sprintf("assets/icon/bunker-%d.png", n))
 		if err != nil {
-			return err
+			return fmt.Errorf("embedded %dpx icon: %w", n, err)
 		}
 		dir := filepath.Join(root, "hicolor", fmt.Sprintf("%dx%d", n, n), "apps")
 		path := filepath.Join(dir, guiAppID+".png")
@@ -37,10 +37,10 @@ func writeIcons(root string) error {
 			continue
 		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
+			return fmt.Errorf("icon directory: %w", err)
 		}
 		if err := os.WriteFile(path, data, 0o644); err != nil {
-			return err
+			return fmt.Errorf("write icon: %w", err)
 		}
 	}
 	return nil
@@ -87,10 +87,10 @@ var installDesktopCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		exe, err := os.Executable()
 		if err != nil {
-			return err
+			return fmt.Errorf("find the bunker binary: %w", err)
 		}
 		if exe, err = filepath.EvalSymlinks(exe); err != nil {
-			return err
+			return fmt.Errorf("find the bunker binary: %w", err)
 		}
 		share := dataHome()
 		if err := writeIcons(filepath.Join(share, "icons")); err != nil {
@@ -98,11 +98,11 @@ var installDesktopCmd = &cobra.Command{
 		}
 		apps := filepath.Join(share, "applications")
 		if err := os.MkdirAll(apps, 0o755); err != nil {
-			return err
+			return fmt.Errorf("applications directory: %w", err)
 		}
 		entry := filepath.Join(apps, guiAppID+".desktop")
 		if err := os.WriteFile(entry, []byte(desktopEntry(exe)), 0o644); err != nil {
-			return err
+			return fmt.Errorf("write desktop entry: %w", err)
 		}
 		fmt.Printf("Installed %s\n  runs %s\n", entry, exe)
 		return nil

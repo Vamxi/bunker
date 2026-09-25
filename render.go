@@ -19,6 +19,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -314,7 +315,9 @@ func cursorDisplayX(_ *Pane, cur vt10x.Cursor) int {
 // url != "" (because styleInvalid.url="" still differs from "X").  Existing
 // hyperlinks keep working; new ones don't leak.
 func closeHostHyperlink(w io.Writer) {
-	w.Write([]byte("\x1b]8;;\x1b\\")) //nolint:errcheck
+	if _, err := w.Write([]byte("\x1b]8;;\x1b\\")); err != nil {
+		L.Log(context.Background(), LevelTrace, "render: close host hyperlink", "err", err)
+	}
 }
 
 // emitTitle writes an OSC 0 window-title sequence to the host terminal if the
@@ -357,7 +360,9 @@ func (app *App) emitTitle(active *Pane) {
 	}
 	app.lastEmittedTitle = title
 	// OSC 0 sets both icon name and window title; BEL-terminated.
-	os.Stdout.Write([]byte("\x1b]0;" + title + "\x07")) //nolint:errcheck
+	if _, err := os.Stdout.Write([]byte("\x1b]0;" + title + "\x07")); err != nil {
+		L.Log(context.Background(), LevelTrace, "render: set host title", "err", err)
+	}
 }
 
 // paneDisplayTitle is the title the pane's program set (OSC 0/1/2), or else

@@ -255,9 +255,9 @@ func (t *State) handleCSI() {
 	case 'n':
 		switch c.arg(0, 0) {
 		case 5: // DSR - device status report
-			t.w.Write([]byte("\033[0n")) //nolint:errcheck // reply write to host PTY; nothing actionable on failure
+			t.reply([]byte("\033[0n"))
 		case 6: // CPR - cursor position report
-			fmt.Fprintf(t.w, "\033[%d;%dR", t.cur.Y+1, t.cur.X+1) //nolint:errcheck // reply write to host PTY
+			t.reply(fmt.Appendf(nil, "\033[%d;%dR", t.cur.Y+1, t.cur.X+1))
 		}
 	case 'r': // DECSTBM - set scrolling region
 		if c.priv {

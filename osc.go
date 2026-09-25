@@ -25,6 +25,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"strconv"
 	"sync"
@@ -209,7 +210,9 @@ func (b *oscBuffer) append(seq []byte) {
 func (b *oscBuffer) flush(w io.Writer) {
 	b.mu.Lock()
 	if len(b.buf) > 0 {
-		w.Write(b.buf) //nolint:errcheck
+		if _, err := w.Write(b.buf); err != nil {
+			L.Log(context.Background(), LevelTrace, "osc: flush to host", "err", err)
+		}
 		b.buf = b.buf[:0]
 	}
 	b.mu.Unlock()

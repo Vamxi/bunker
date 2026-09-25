@@ -8,6 +8,7 @@
 package main
 
 import (
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -76,7 +77,7 @@ func (gw *guiWin) newTab(dir string, command []string) *guiTab {
 			app.paneOSCColors(), app.redraw, app.paneDead, app.done, app.oscBuf,
 			view.cellH/view.cellW)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("start pane: %w", err)
 		}
 		app.mu.Lock()
 		app.nextID++
