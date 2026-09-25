@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -151,6 +152,28 @@ func TestSafeLocalFile(t *testing.T) {
 	} {
 		if got := safeLink(u); got != want {
 			t.Errorf("safeLink(%q) = %v, want %v", u, got, want)
+		}
+	}
+}
+
+// A program that places each piece of a long URL itself (cursor moves, no
+// terminal wrap) still gets one link.
+func TestPlainURLAtCursorPlaced(t *testing.T) {
+	const cols, rows = 20, 4
+	term := vt10x.New(vt10x.WithSize(cols, rows))
+	u := "https://example.com/" + strings.Repeat("x", 30)
+	for i := 0; i < len(u); i += cols {
+		fmt.Fprintf(term, "\x1b[%d;1H%s", i/cols+1, u[i:min(i+cols, len(u))])
+	}
+	grid := make([][]vt10x.Glyph, rows)
+	for y := range grid {
+		for x := range cols {
+			grid[y] = append(grid[y], term.Cell(x, y))
+		}
+	}
+	for row := range 3 {
+		if got, _, ok := plainURLAt(grid, row, 2); !ok || got != u {
+			t.Errorf("row %d: got %q ok=%v", row, got, ok)
 		}
 	}
 }

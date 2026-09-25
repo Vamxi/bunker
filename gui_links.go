@@ -250,7 +250,7 @@ func (v *termView) updateHoverLink(x, y float64) {
 	v.hoverLink = link
 	if link != nil {
 		v.SetCursorFromName("pointer")
-		v.SetTooltipText("Ctrl+click to open " + link.url)
+		v.SetTooltipText("Ctrl+click to open")
 	} else {
 		v.SetCursorFromName("text")
 		v.SetTooltipText("")
