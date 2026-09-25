@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 
 	"bunker/internal/vt10x"
@@ -25,17 +26,30 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
-// linkSpan is a link under the pointer: a run of cells in one pane row.
+// linkSpan is a link under the pointer. A URL wrapped onto following rows
+// has one segment per row.
 type linkSpan struct {
 	pane     *Pane
-	row      int // frame row within the pane
-	c0, c1   int // columns [c0, c1) within the pane
+	segs     []linkSeg
 	url      string
 	explicit bool // OSC 8 (vs. a URL detected in the text)
 }
 
+// linkSeg is the part of a link on one frame row: columns [c0, c1).
+type linkSeg struct{ row, c0, c1 int }
+
+func (l *linkSpan) equal(o *linkSpan) bool {
+	if l == nil || o == nil {
+		return l == o
+	}
+	return l.pane == o.pane && l.url == o.url && l.explicit == o.explicit && slices.Equal(l.segs, o.segs)
+}
+
 // plainURL matches URLs printed as text.
 var plainURL = regexp.MustCompile(`(?i)\b(?:https?://|mailto:|file://)[^\s<>"'` + "`" + `]+`)
+
+// maxLinkRows bounds how many rows a wrapped link is followed across.
+const maxLinkRows = 16
 
 // linkAt finds the link under widget coordinates (x, y), if any.
 func (v *termView) linkAt(x, y float64) *linkSpan {
@@ -48,54 +62,124 @@ func (v *termView) linkAt(x, y float64) *linkSpan {
 		if row >= len(f.grid) || col >= len(f.grid[row]) {
 			return nil
 		}
-		line := f.grid[row]
-		if id := line[col].Link; id != 0 {
+		if id := f.grid[row][col].Link; id != 0 {
 			p.mu.Lock()
 			u := p.term.Link(id)
 			p.mu.Unlock()
 			if u == "" {
 				return nil
 			}
-			c0, c1 := col, col+1
-			for c0 > 0 && line[c0-1].Link == id {
-				c0--
-			}
-			for c1 < len(line) && line[c1].Link == id {
-				c1++
-			}
-			return &linkSpan{pane: p, row: row, c0: c0, c1: c1, url: u, explicit: true}
+			return &linkSpan{pane: p, segs: explicitLinkSegs(f.grid, row, col), url: u, explicit: true}
 		}
-		if u, c0, c1, ok := plainURLAt(line, col); ok {
-			return &linkSpan{pane: p, row: row, c0: c0, c1: c1, url: u}
+		if u, segs, ok := plainURLAt(f.grid, row, col); ok {
+			return &linkSpan{pane: p, segs: segs, url: u}
 		}
 		return nil
 	}
 	return nil
 }
 
-// plainURLAt finds a URL printed in line that covers column col, returning
-// it and its cell span [c0, c1).
-func plainURLAt(line []vt10x.Glyph, col int) (u string, c0, c1 int, ok bool) {
-	var text strings.Builder
-	var cellOf []int // byte offset in text → column
-	for c, g := range line {
-		if g.Width < 0 {
-			continue
+// explicitLinkSegs returns the cells of the OSC 8 link at (row, col),
+// following it onto the rows above and below when it runs across a row edge.
+func explicitLinkSegs(grid [][]vt10x.Glyph, row, col int) []linkSeg {
+	id := grid[row][col].Link
+	run := func(r, c int) linkSeg {
+		line := grid[r]
+		c0, c1 := c, c+1
+		for c0 > 0 && line[c0-1].Link == id {
+			c0--
 		}
-		s := g.Text()
-		for range len(s) {
-			cellOf = append(cellOf, c)
+		for c1 < len(line) && line[c1].Link == id {
+			c1++
 		}
-		text.WriteString(s)
+		return linkSeg{r, c0, c1}
 	}
-	cellOf = append(cellOf, len(line))
+	seg := run(row, col)
+	segs := []linkSeg{seg}
+	for r := row; seg.c0 == 0 && r > 0 && row-r < maxLinkRows; r-- {
+		above := grid[r-1]
+		if len(above) == 0 || above[len(above)-1].Link != id {
+			break
+		}
+		seg = run(r-1, len(above)-1)
+		segs = append([]linkSeg{seg}, segs...)
+	}
+	seg = segs[len(segs)-1]
+	for r := row; seg.c1 == len(grid[r]) && r+1 < len(grid) && r-row < maxLinkRows; r++ {
+		if len(grid[r+1]) == 0 || grid[r+1][0].Link != id {
+			break
+		}
+		seg = run(r+1, 0)
+		segs = append(segs, seg)
+	}
+	return segs
+}
+
+// continuesBelow reports whether row r runs on into row r+1: the terminal
+// soft-wrapped it, or text fills the last column and carries on in the first,
+// which is how programs that position the cursor themselves lay out a long URL.
+func continuesBelow(grid [][]vt10x.Glyph, r int) bool {
+	if r+1 >= len(grid) || len(grid[r]) == 0 || len(grid[r+1]) == 0 {
+		return false
+	}
+	last := grid[r][len(grid[r])-1]
+	if last.Mode&vt10x.AttrWrap != 0 {
+		return true
+	}
+	return urlCell(last) && urlCell(grid[r+1][0])
+}
+
+// urlCell reports whether g could be part of a URL.
+func urlCell(g vt10x.Glyph) bool {
+	return g.Width == 1 && g.Char > ' ' && !strings.ContainsRune(`<>"'`+"`", g.Char)
+}
+
+// plainURLAt finds a URL printed in the text that covers (row, col), joining
+// rows the URL wraps across, and returns it with its cells.
+func plainURLAt(grid [][]vt10x.Glyph, row, col int) (u string, segs []linkSeg, ok bool) {
+	top, bot := row, row
+	for top > 0 && row-top < maxLinkRows && continuesBelow(grid, top-1) {
+		top--
+	}
+	for bot-row < maxLinkRows && continuesBelow(grid, bot) {
+		bot++
+	}
+	type cell struct{ row, col int }
+	before := func(a, b cell) bool { return a.row < b.row || (a.row == b.row && a.col < b.col) }
+	var text strings.Builder
+	var cellOf []cell // byte offset in text → cell
+	for r := top; r <= bot; r++ {
+		for c, g := range grid[r] {
+			s := g.Text()
+			for range len(s) {
+				cellOf = append(cellOf, cell{r, c})
+			}
+			text.WriteString(s)
+		}
+	}
+	cellOf = append(cellOf, cell{bot, len(grid[bot])})
+	at := cell{row, col}
 	for _, m := range plainURL.FindAllStringIndex(text.String(), -1) {
 		start, end := m[0], trimURLEnd(text.String(), m[0], m[1])
-		if cellOf[start] <= col && col < cellOf[end] {
-			return text.String()[start:end], cellOf[start], cellOf[end], true
+		c0, c1 := cellOf[start], cellOf[end]
+		if before(at, c0) || !before(at, c1) {
+			continue
 		}
+		for r := c0.row; r <= c1.row; r++ {
+			seg := linkSeg{r, 0, len(grid[r])}
+			if r == c0.row {
+				seg.c0 = c0.col
+			}
+			if r == c1.row {
+				seg.c1 = c1.col
+			}
+			if seg.c0 < seg.c1 {
+				segs = append(segs, seg)
+			}
+		}
+		return text.String()[start:end], segs, true
 	}
-	return "", 0, 0, false
+	return "", nil, false
 }
 
 // trimURLEnd drops trailing punctuation that usually ends a sentence rather
@@ -160,9 +244,7 @@ func (v *termView) updateHoverLink(x, y float64) {
 	if link != nil && !safeLink(link.url) {
 		link = nil
 	}
-	same := (link == nil) == (v.hoverLink == nil) &&
-		(link == nil || (*link == *v.hoverLink))
-	if same {
+	if link.equal(v.hoverLink) {
 		return
 	}
 	v.hoverLink = link
@@ -197,11 +279,16 @@ func (v *termView) openLink(u string) {
 // drawHoverLink underlines the hovered link in pane frame f.
 func (v *termView) drawHoverLink(s *gtk.Snapshot, p *Pane, f *paneFrame) {
 	l := v.hoverLink
-	if l == nil || l.pane != p || l.row >= f.rows {
+	if l == nil || l.pane != p {
 		return
 	}
-	x0, x1 := v.pad+v.colX(f.x+l.c0), v.pad+v.colX(f.x+l.c1)
-	y := v.pad + float64(f.y+l.row)*v.cellH
 	ul := math.Round(min(v.ulPos, v.cellH-v.ulThick)) // on whole pixels, like text underlines
-	v.fillRect(s, x0, y+ul, x1-x0, v.ulThick, rgba(v.theme.palette[4], 1))
+	for _, seg := range l.segs {
+		if seg.row >= f.rows {
+			continue
+		}
+		x0, x1 := v.pad+v.colX(f.x+seg.c0), v.pad+v.colX(f.x+seg.c1)
+		y := v.pad + float64(f.y+seg.row)*v.cellH
+		v.fillRect(s, x0, y+ul, x1-x0, v.ulThick, rgba(v.theme.palette[4], 1))
+	}
 }

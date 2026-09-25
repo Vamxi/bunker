@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -439,10 +440,11 @@ func tail(b []byte, lines int) string {
 func TestGUI_Hyperlinks(t *testing.T) {
 	out := `printf '\033]8;;https://github.com/jsnjack/bunk\033\\bunk repo\033]8;;\033\\\n'` +
 		`; printf 'docs: https://go.dev/doc.\n'` +
-		`; printf '\033]8;;javascript:alert(1)\033\\evil\033]8;;\033\\\n'; exec sleep 30`
+		`; printf '\033]8;;javascript:alert(1)\033\\evil\033]8;;\033\\\n'` +
+		`; printf 'https://example.com/%0300d\n' 0; exec sleep 30`
 	w := newTestWin(t, out, nil)
 	p := w.panes()[0]
-	w.waitDrawn(p, "docs: https://go.dev/doc.")
+	w.waitDrawn(p, "https://example.com/0000")
 
 	var opened []string
 	onMain(func() {
@@ -452,7 +454,7 @@ func TestGUI_Hyperlinks(t *testing.T) {
 			return v.pad + (float64(col)+0.5)*v.cellW, v.pad + (float64(row)+0.5)*v.cellH
 		}
 		x, y := cell(2, 0) // inside "bunk repo"
-		if l := v.linkAt(x, y); l == nil || l.url != "https://github.com/jsnjack/bunk" || !l.explicit || l.c0 != 0 || l.c1 != 9 {
+		if l := v.linkAt(x, y); l == nil || l.url != "https://github.com/jsnjack/bunk" || !l.explicit || !slices.Equal(l.segs, []linkSeg{{0, 0, 9}}) {
 			t.Errorf("OSC 8 link: %+v", l)
 		}
 		v.updateHoverLink(x, y)
@@ -469,6 +471,13 @@ func TestGUI_Hyperlinks(t *testing.T) {
 		x, y = cell(1, 2) // javascript: link
 		v.mouseButton(1, true, x, y, ctrl)
 		v.mouseButton(1, false, x, y, ctrl)
+
+		// A URL longer than the row wraps; any row of it finds all of it.
+		long := "https://example.com/" + strings.Repeat("0", 300)
+		x, y = cell(3, 4)
+		if l := v.linkAt(x, y); l == nil || l.url != long || len(l.segs) < 2 || l.segs[0].row != 3 {
+			t.Errorf("wrapped URL: %+v", l)
+		}
 
 		x, y = cell(2, 0) // plain click selects, does not open
 		v.mouseButton(1, true, x, y, 0)
