@@ -90,6 +90,26 @@ list.bunker-card > row:last-child {
 	font-family: monospace;
 	opacity: 0.8;
 }
+button.bunker-keycap {
+	min-width: 96px;
+	padding: 3px 12px;
+	border-radius: 7px;
+	font-feature-settings: "tnum";
+}
+button.bunker-keycap.bunker-recording {
+	outline: 2px solid @theme_selected_bg_color;
+	outline-offset: -2px;
+}
+button.bunker-keycap.bunker-keycap-off label {
+	opacity: 0.55;
+	font-style: italic;
+}
+.bunker-clash {
+	padding: 10px 14px;
+	border-radius: 10px;
+	background-color: alpha(@theme_selected_bg_color, 0.14);
+	border: 1px solid alpha(@theme_selected_bg_color, 0.45);
+}
 .bunker-settings-error {
 	background-color: #c01c28;
 	color: white;

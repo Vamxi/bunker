@@ -38,8 +38,14 @@ type settingsWindow struct {
 	tabsCollapse *gtk.Switch
 	scrollback   *gtk.SpinButton
 	scrollbackMB *gtk.SpinButton
-	keyLabels    map[string]*gtk.Label // bunk action → effective key
+	cursorBlink  *gtk.DropDown
 	status       *gtk.Label
+
+	keyRows    map[string]*keyRow // Keyboard page, by action
+	recording  *keyRow            // row waiting for a key press
+	clash      *keyClash          // key waiting for Replace
+	clashBar   *gtk.Revealer
+	clashLabel *gtk.Label
 }
 
 // guiThemeNames lists themes usable in a window, sorted.
@@ -154,15 +160,26 @@ func newSettingsWindow(gw *guiWin) *settingsWindow {
 	s.win.SetDestroyWithParent(true)
 	s.win.SetHideOnClose(true)
 	s.win.SetDefaultSize(780, 560)
-	closeKey := gtk.NewEventControllerKey()
-	closeKey.ConnectKeyPressed(func(keyval, _ uint, _ gdk.ModifierType) bool {
+	// Capture phase: a recording shortcut must see the key before the
+	// focused button activates on Space or Enter.
+	keys := gtk.NewEventControllerKey()
+	keys.SetPropagationPhase(gtk.PhaseCapture)
+	keys.ConnectKeyPressed(func(keyval, keycode uint, state gdk.ModifierType) bool {
+		defer guiRecover("settings key")
+		if s.recording != nil {
+			return s.recordKey(keyval, keycode, state)
+		}
 		if keyval == gdk.KEY_Escape {
 			s.win.Close()
 			return true
 		}
 		return false
 	})
-	s.win.AddController(closeKey)
+	s.win.AddController(keys)
+	s.win.ConnectCloseRequest(func() bool {
+		s.stopRecording()
+		return false
+	})
 
 	stack := gtk.NewStack()
 	s.stack = stack
@@ -225,7 +242,7 @@ func (s *settingsWindow) buildAppearance(p *settingsPage) {
 			s.write("", "font", tomlString(desc.String()))
 		}
 	})
-	g.row("Font", "Monospace fonts only; Ctrl+Shift+= / - zooms a window", s.font)
+	g.row("Font", "Monospace fonts only; the Keyboard page has shortcuts to resize text", s.font)
 
 	s.padding = spin(0, maxPadding, 1)
 	s.padding.ConnectValueChanged(func() {
@@ -234,6 +251,15 @@ func (s *settingsWindow) buildAppearance(p *settingsPage) {
 		}
 	})
 	g.row("Padding", "Space between the window edge and the text, in pixels", s.padding)
+
+	g = p.group("Cursor", "")
+	s.cursorBlink = gtk.NewDropDownFromStrings([]string{"Follow system", "On", "Off"})
+	s.cursorBlink.NotifyProperty("selected", func() {
+		if i := int(s.cursorBlink.Selected()); !s.updating && i < len(cursorBlinkModes) {
+			s.write("cursor", "blink", tomlString(cursorBlinkModes[i]))
+		}
+	})
+	g.row("Blinking", "Follow system uses the desktop setting, and a program's request for a blinking or steady cursor", s.cursorBlink)
 }
 
 func (s *settingsWindow) buildTabs(p *settingsPage) {
@@ -270,11 +296,8 @@ func (s *settingsWindow) buildTabs(p *settingsPage) {
 	})
 	g.row("Start collapsed", "The sidebar shows one character per tab: its number, or the first letter of a name you gave it. The header-bar button toggles it.", s.tabsCollapse)
 
-	g = p.group("Shortcuts", "")
+	g = p.group("Mouse", "Keyboard shortcuts for tabs are on the Keyboard page.")
 	for _, sc := range [][2]string{
-		{"New tab in the current directory", "Ctrl+Shift+T"},
-		{"Close tab", "Ctrl+Shift+W"},
-		{"Previous / next tab", "Ctrl+PgUp / Ctrl+PgDn"},
 		{"Rename tab", "Double-click (expanded sidebar or bar)"},
 		{"Close tab with the mouse", "Middle-click"},
 		{"Tab menu (rename, reset name, close others)", "Right-click"},
@@ -302,50 +325,6 @@ func (s *settingsWindow) buildTerminal(p *settingsPage) {
 		}
 	})
 	g.row("Memory cap (MiB)", "0 turns the cap off; wide windows keep fewer lines under a cap", s.scrollbackMB)
-}
-
-// buildKeyboard lists bunk's pane bindings (from [keys]) and bunker's own
-// window shortcuts. Keys are shown, not yet editable here.
-func (s *settingsWindow) buildKeyboard(p *settingsPage) {
-	s.keyLabels = make(map[string]*gtk.Label)
-	groups := []struct {
-		title   string
-		actions []string
-	}{
-		{"Panes", []string{"split", "split_context", "zoom", "nav_left", "nav_right", "nav_up", "nav_down", "passthrough"}},
-		{"Search", []string{"search", "search_next", "search_prev", "search_exit"}},
-		{"Clipboard and Scrollback", []string{"copy", "paste", "scroll_up", "scroll_down"}},
-	}
-	desc := make(map[string]string, len(keybindingDefaults))
-	for _, e := range keybindingDefaults {
-		desc[e.action] = e.desc
-	}
-	for i, grp := range groups {
-		note := ""
-		if i == 0 {
-			note = "bunk's bindings, set under [keys] in the config file. Ctrl+F12 passthrough sends every other key to the program."
-		}
-		g := p.group(grp.title, note)
-		for _, action := range grp.actions {
-			key := gtk.NewLabel("")
-			key.AddCSSClass("bunker-key")
-			s.keyLabels[action] = key
-			g.row(desc[action], "", key)
-		}
-	}
-	g := p.group("Window", "bunker's own shortcuts.")
-	for _, sc := range [][2]string{
-		{"New tab / close tab", "Ctrl+Shift+T / Ctrl+Shift+W"},
-		{"Previous / next tab", "Ctrl+PgUp / Ctrl+PgDn"},
-		{"Copy / paste (system clipboard)", "Ctrl+Shift+C / Ctrl+Shift+V"},
-		{"Font bigger / smaller / reset", "Ctrl+Shift+= / - / 0"},
-		{"Preferences", "Ctrl+,"},
-		{"Close window", "Ctrl+Shift+Q (or bunk's quit key)"},
-	} {
-		key := gtk.NewLabel(sc[1])
-		key.AddCSSClass("bunker-key")
-		g.row(sc[0], "", key)
-	}
 }
 
 func (s *settingsWindow) buildAdvanced(p *settingsPage) {
@@ -401,11 +380,10 @@ func (s *settingsWindow) load(cfg Config) {
 	s.tabsCollapse.SetActive(cfg.Tabs.Collapsed)
 	s.scrollback.SetValue(float64(cfg.Scrollback))
 	s.scrollbackMB.SetValue(float64(cfg.ScrollbackBytes >> 20))
-	for _, e := range keybindingDefaults {
-		if l := s.keyLabels[e.action]; l != nil {
-			l.SetText(e.field(&cfg.Keybindings).raw)
-		}
+	if i := slices.Index(cursorBlinkModes, cfg.Cursor.Blink); i >= 0 {
+		s.cursorBlink.SetSelected(uint(i))
 	}
+	s.loadKeys(cfg)
 }
 
 // guiMonospaceOnly keeps the font chooser to fixed-width families; a

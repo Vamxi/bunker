@@ -179,7 +179,7 @@ func TestGUI_Preferences(t *testing.T) {
 		if s.themes[s.theme.Selected()] != "nord" || tabPositions[s.tabsPos.Selected()] != "right" {
 			t.Errorf("settings show theme %q, position %q", s.themes[s.theme.Selected()], tabPositions[s.tabsPos.Selected()])
 		}
-		if got := s.keyLabels["split"].Text(); got != "f1" {
+		if got := s.keyRows["split"].label.Text(); got != "F1" {
 			t.Errorf("keyboard page shows split = %q", got)
 		}
 		for i, name := range s.themes {

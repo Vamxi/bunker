@@ -236,6 +236,9 @@ func (v *termView) snapshot(s *gtk.Snapshot) {
 			continue
 		}
 		v.drawPane(s, p, f, p == active, p == zoomed)
+		if p == active && v.focused && v.blink.timer == 0 && v.blink.wants(f.cursor.Shape) && time.Now().Before(v.blink.until) {
+			coreglib.IdleAdd(v.kickBlink) // the program asked for a blinking cursor
+		}
 		if p == active && f.title != v.title {
 			v.title = f.title
 			if v.onTitle != nil {
@@ -352,6 +355,9 @@ func (v *termView) drawSelection(s *gtk.Snapshot, f *paneFrame) {
 func (v *termView) drawCursor(s *gtk.Snapshot, f *paneFrame) {
 	cur := f.cursor
 	if !f.cursorOn || cur.Y < 0 || cur.Y >= f.rows || cur.X < 0 || cur.X >= f.cols {
+		return
+	}
+	if v.focused && v.blink.hidden && v.blink.wants(cur.Shape) {
 		return
 	}
 	cell := f.grid[cur.Y][cur.X]

@@ -22,6 +22,7 @@ make check       # fmt, vet, test, build, lint: the gate before a release
 | GUI integration | `gui_integration_test.go` (harness in `guitest_harness_test.go`) | real windows on the test display, driven like a user: see below |
 | Allocation guards | `allocs_test.go`, `TestWriteDoesNotAllocate`, `TestCSIParseDoesNotAllocate` | hot paths allocate nothing in steady state |
 | Size guard | `internal/vt10x/glyph_test.go` | a cell stays 32 bytes |
+| Shortcuts and settings | `shortcuts_test.go`, `gui_shortcuts_test.go` | key syntax and GTK spelling, clash rules, the shipped config has no clashes, `bunker config set/get/list` for every kind of setting, key-press conversion |
 | Build gate | `makefile_test.go` | `make check` runs tests before building, even with `make -j` |
 | Packaging | `desktop_test.go` | the RPM (`nfpm.yaml`) ships exactly the launcher and icons `install-desktop` stages |
 
@@ -49,6 +50,9 @@ file on disk, tab actions.
 | `TestGUI_NoLeaks` | 15 cycles of tab + splits + output + close give back every goroutine, fd, child process, and heap byte; no zombies |
 | `TestGUI_PasteWhatBunkerCopied` | Ctrl+V after bunker copied (text, search bar, image) never freezes the window |
 | `TestGUI_ContextSplitIsAsync` | Alt+F1 resolves the context in the background and splits on the GTK thread |
+| `TestGUI_RemappedShortcuts` | remapped window keys (F2, Ctrl+←/→) drive tabs; the old key is freed |
+| `TestGUI_RecordShortcut` | Preferences recorder: set, Esc, Backspace (off), clash asks before Replace, unusable pane keys explained |
+| `TestGUI_CursorBlink` | blink on hides and shows the cursor, stops after the timeout; off never blinks |
 | `TestGUI_WaylandIMStress` | rapid window/tab/entry churn on the Wayland input method, in a child process (this used to crash GTK) |
 
 `make test` runs them on a private headless GNOME compositor

@@ -37,6 +37,7 @@ type fileConfig struct {
 	Font         string            `toml:"font"`          // GUI: Pango font description, e.g. "JetBrains Mono 12"
 	Window       windowConfig      `toml:"window"`        // GUI window options
 	Tabs         tabsConfig        `toml:"tabs"`          // GUI tab bar options
+	Cursor       cursorConfig      `toml:"cursor"`        // GUI cursor options
 	UI           uiOverride        `toml:"ui"`
 	Keys         map[string]string `toml:"keys"` // action → key string, e.g. "split" → "f1"
 }
@@ -44,6 +45,15 @@ type fileConfig struct {
 type windowConfig struct {
 	Padding int `toml:"padding"` // pixels around the terminal grid
 }
+
+type cursorConfig struct {
+	// Blink is "system" (follow the desktop, and the program when it asks
+	// for a blinking or steady cursor), "on", or "off".
+	Blink string `toml:"blink"`
+}
+
+// cursorBlinkModes are the accepted [cursor] blink values, as in Ptyxis.
+var cursorBlinkModes = []string{"system", "on", "off"}
 
 type tabsConfig struct {
 	Position string `toml:"position"` // left | right | top | bottom
@@ -117,11 +127,12 @@ type Keybinding struct {
 	mod tcell.ModMask
 	r   rune   // only meaningful when key == tcell.KeyRune (e.g. alt+letter)
 	raw string // original string, for display
+	off bool   // "none": the action has no key
 }
 
 // Matches returns true if ev matches this keybinding.
 func (kb Keybinding) Matches(ev *tcell.EventKey) bool {
-	if ev.Key() != kb.key {
+	if kb.off || ev.Key() != kb.key {
 		return false
 	}
 	// For rune-keys (alt+letter), the actual letter must match.  We normalise
@@ -164,6 +175,9 @@ func (kb Keybinding) String() string { return kb.raw }
 func parseKey(s string) (Keybinding, error) {
 	orig := s
 	s = strings.ToLower(strings.TrimSpace(s))
+	if s == keyNone {
+		return Keybinding{off: true, raw: orig}, nil
+	}
 
 	parts := strings.Split(s, "+")
 	if len(parts) == 0 || (len(parts) == 1 && parts[0] == "") {
@@ -283,6 +297,10 @@ func keybindingsHelpText(kb *Keybindings) string {
 		}
 		fmt.Fprintf(&b, "  %-16s  %s\n", key, e.desc)
 	}
+	b.WriteString("\nWindow shortcuts (bunker config list shows the current ones):\n")
+	for _, w := range windowShortcuts {
+		fmt.Fprintf(&b, "  %-16s  %s\n", w.def, w.desc)
+	}
 	return b.String()
 }
 
@@ -304,6 +322,9 @@ func resolveKeybindings(kf map[string]string) Keybindings {
 			parsed = mustParseKey(e.def)
 		}
 		*e.field(&kb) = parsed
+	}
+	for _, w := range windowShortcuts {
+		known[w.action] = struct{}{}
 	}
 	for action := range kf {
 		if _, ok := known[action]; !ok {
@@ -374,6 +395,12 @@ type Config struct {
 	// The smaller of the two limits applies; see Pane.sbCapacity.
 	ScrollbackBytes int
 	Keybindings     Keybindings
+	WindowKeys      map[string]string // window action → canonical key (shortcuts.go)
+	Cursor          cursorConfig
+	UIOverrides     map[string]string // [ui] colours as written; "" = the theme's
+	// KeyProblems lists invalid shortcuts and keys set for two actions, so
+	// the window can show them; the config still loads.
+	KeyProblems []string
 }
 
 // ---------------------------------------------------------------------------
@@ -482,6 +509,7 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 		Font:     defaultFont,
 		Window:   windowConfig{Padding: defaultPadding},
 		Tabs:     tabsConfig{Position: defaultTabsSide, Width: defaultTabsWidth},
+		Cursor:   cursorConfig{Blink: "system"},
 	}
 	if _, err := toml.DecodeFile(path, &fc); err != nil {
 		if explicit || !os.IsNotExist(err) {
@@ -531,6 +559,18 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 		scrollback = defaultScrollbackLines
 	}
 
+	panes := resolveKeybindings(fc.Keys)
+	windowKeys, problems := resolveWindowKeys(fc.Keys)
+	paneKeys := make(map[string]string, len(keybindingDefaults))
+	for _, e := range keybindingDefaults {
+		paneKeys[e.action] = e.field(&panes).raw
+	}
+	problems = append(problems, findKeyClashes(windowKeys, paneKeys)...)
+	if !slices.Contains(cursorBlinkModes, fc.Cursor.Blink) {
+		problems = append(problems, fmt.Sprintf("cursor.blink %q is not one of %s; using system", fc.Cursor.Blink, strings.Join(cursorBlinkModes, ", ")))
+		fc.Cursor.Blink = "system"
+	}
+
 	return Config{
 		Path:            path,
 		ThemeName:       fc.Theme,
@@ -543,7 +583,14 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 		CellAspect:      fc.CellAspect,
 		Scrollback:      scrollback,
 		ScrollbackBytes: int(max(fc.ScrollbackMB, 0) * (1 << 20)),
-		Keybindings:     resolveKeybindings(fc.Keys),
+		Keybindings:     panes,
+		WindowKeys:      windowKeys,
+		Cursor:          fc.Cursor,
+		UIOverrides: map[string]string{
+			"active_border": fc.UI.ActiveBorder, "inactive_border": fc.UI.InactiveBorder,
+			"scrollbar_thumb": fc.UI.ScrollThumb, "scrollbar_track": fc.UI.ScrollTrack,
+		},
+		KeyProblems: problems,
 	}, nil
 }
 
@@ -647,7 +694,32 @@ scrollbar_track = ""  # scrollbar background
 # Format: "f1", "ctrl+c", "alt+up", "shift+pgup", "escape", etc.
 # Modifiers: ctrl, alt, shift.  Key names are case-insensitive.
 # Leave a value empty (or remove the line) to keep the built-in default.
+# Cursor.  blink: "system" follows the desktop (and a program that asks for a
+# blinking or steady cursor), "on" always blinks, "off" never does.
+[cursor]
+blink = "system"
+
+# Shortcuts: "mod+mod+key" with ctrl, alt, shift; keys are letters, digits,
+# f1-f24, up/down/left/right, pgup/pgdn, home/end, enter, escape, tab,
+# backspace, delete, insert, space, and names such as comma, minus, plus.
+# "none" turns a shortcut off.  A key set twice is reported; the window's
+# own shortcuts win over pane keys.  Preferences > Keyboard edits these too.
 [keys]
+# The window
+new_tab             = "ctrl+shift+t"
+close_tab           = "ctrl+shift+w"
+next_tab            = "ctrl+pgdn"
+prev_tab            = "ctrl+pgup"
+copy_clipboard      = "ctrl+shift+c"
+paste_clipboard     = "ctrl+shift+v"
+paste_clipboard_alt = "shift+insert"
+font_bigger         = "ctrl+shift+plus"
+font_smaller        = "ctrl+shift+minus"
+font_reset          = "ctrl+shift+0"
+preferences         = "ctrl+comma"
+close_window        = "ctrl+shift+q"
+
+# Panes (bunk)
 split         = "f1"          # auto-split the active pane (host shell)
 split_context = "alt+f1"     # auto-split inheriting container/ssh/sudo context
 quit         = "ctrl+q"      # quit bunk

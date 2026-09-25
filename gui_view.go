@@ -86,7 +86,9 @@ type termView struct {
 
 	ime imeState
 
-	hoverLink *linkSpan        // link under the pointer, underlined
+	hoverLink *linkSpan      // link under the pointer, underlined
+	shortcuts []viewShortcut // the window's shortcuts from [keys]
+	blink     cursorBlink
 	openURI   func(url string) // tests replace the desktop launcher
 
 	mouseBtn  tcell.ButtonMask
@@ -115,6 +117,7 @@ func (v *termView) release() {
 	if v.reflowTimer != nil {
 		v.reflowTimer.Stop()
 	}
+	v.stopBlink()
 	clear(v.frames)
 	clear(v.layouts)
 	v.hoverLink = nil
@@ -124,6 +127,8 @@ func (v *termView) release() {
 func newTermView(app *App, cfg Config) *termView {
 	v := termViewType.New()
 	v.app = app
+	v.shortcuts = viewShortcuts(cfg.WindowKeys)
+	v.blink.mode = cfg.Cursor.Blink
 	v.theme = cfg.Theme
 	v.pad = float64(cfg.Padding)
 	v.fontBase = cfg.Font
@@ -159,6 +164,12 @@ func (v *termView) applyConfig(cfg Config) {
 		relayout = true
 	}
 	v.theme = cfg.Theme // layouts are colour-independent, nothing to flush
+	v.shortcuts = viewShortcuts(cfg.WindowKeys)
+	if cfg.Cursor.Blink != v.blink.mode {
+		v.blink.mode = cfg.Cursor.Blink
+		v.stopBlink()
+		v.kickBlink()
+	}
 	if relayout {
 		v.cols, v.rows = 0, 0 // force sizeAllocate to recompute the grid
 		v.QueueResize()

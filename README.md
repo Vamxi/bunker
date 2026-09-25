@@ -53,7 +53,8 @@ To build from source instead: `sudo dnf install gtk4-devel && make install`
 | `Ctrl+PgUp` / `Ctrl+PgDn` | Previous / next tab |
 | `Ctrl+,` | Preferences |
 
-Right-click a tab to rename or close it. Pane keys follow bunk's `[keys]` config.
+Right-click a tab to rename or close it. Every shortcut can be changed in
+Preferences > Keyboard, under `[keys]` in the config, or from a shell.
 
 ## Configuration
 
@@ -70,7 +71,27 @@ font  = "JetBrains Mono 12"
 [tabs]
 position  = "left"           # left, right, top, bottom
 collapsed = false
+
+[cursor]
+blink = "off"                # system, on, off
+
+[keys]
+new_tab  = "f2"
+next_tab = "ctrl+right"
+prev_tab = "ctrl+left"
 ```
+
+The same settings from a shell, for scripts and dotfiles:
+
+```bash
+bunker config set cursor.blink off
+bunker config set keys.new_tab f2
+bunker config set keys.next_tab '<Control>Right'   # GTK spelling works too
+bunker config list                                   # every setting and its value
+```
+
+A running bunker applies changes at once. If two actions end up with the
+same key, bunker says so in a banner.
 
 ## More
 

@@ -161,6 +161,7 @@ func (gw *guiWin) build(command []string) {
 	gw.runDebugHooks()
 	gw.watchConfig()
 	gw.pollTitles()
+	gw.showKeyProblems(gw.cfg)
 	// The system theme follows the desktop's light/dark switch live.
 	if s := gtk.SettingsGetDefault(); s != nil {
 		s.NotifyProperty("gtk-interface-color-scheme", func() {
@@ -231,26 +232,42 @@ func (gw *guiWin) headerBar() *gtk.HeaderBar {
 }
 
 func (gw *guiWin) installActions() {
-	add := func(name string, accels []string, fn func()) {
+	add := func(name string, fn func()) {
 		a := gio.NewSimpleAction(name, nil)
 		a.ConnectActivate(func(*glib.Variant) { fn() })
 		gw.win.AddAction(a)
-		if len(accels) > 0 {
-			gw.gapp.SetAccelsForAction("win."+name, accels)
-		}
 	}
-	add("preferences", []string{"<Control>comma"}, gw.openSettings)
-	add("open-config", nil, gw.openConfigFile)
-	add("close-window", []string{"<Control><Shift>q"}, func() { gw.win.Close() })
-	add("new-tab", []string{"<Control><Shift>t"}, func() { gw.newTab(gw.activeCwd(), nil) })
-	add("close-tab", []string{"<Control><Shift>w"}, func() {
+	add("preferences", gw.openSettings)
+	add("open-config", gw.openConfigFile)
+	add("close-window", func() { gw.win.Close() })
+	add("new-tab", func() { gw.newTab(gw.activeCwd(), nil) })
+	add("close-tab", func() {
 		if gw.active != nil {
 			gw.closeTab(gw.active)
 		}
 	})
-	add("toggle-tabs", nil, func() { gw.setCollapsed(!gw.collapsed) })
-	add("next-tab", []string{"<Control>Page_Down"}, func() { gw.selectRelative(1) })
-	add("prev-tab", []string{"<Control>Page_Up"}, func() { gw.selectRelative(-1) })
+	add("toggle-tabs", func() { gw.setCollapsed(!gw.collapsed) })
+	add("next-tab", func() { gw.selectRelative(1) })
+	add("prev-tab", func() { gw.selectRelative(-1) })
+	gw.applyAccels(gw.cfg)
+}
+
+// windowAccelActions are the window shortcuts that are also application
+// accelerators, so they work while a text field (tab rename) has focus.
+// In the terminal the view matches them first (termView.windowShortcut).
+var windowAccelActions = map[string]string{
+	"new_tab": "win.new-tab", "close_tab": "win.close-tab", "next_tab": "win.next-tab",
+	"prev_tab": "win.prev-tab", "preferences": "win.preferences", "close_window": "win.close-window",
+}
+
+func (gw *guiWin) applyAccels(cfg Config) {
+	for action, gaction := range windowAccelActions {
+		var accels []string
+		if a := shortcutAccel(cfg.WindowKeys[action]); a != "" {
+			accels = []string{a}
+		}
+		gw.gapp.SetAccelsForAction(gaction, accels)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +345,18 @@ func (gw *guiWin) reload() {
 	}
 	gw.hideBanner()
 	gw.apply(guiConfig(cfg))
+	gw.showKeyProblems(cfg)
+}
+
+// showKeyProblems puts invalid or doubled shortcuts in the banner.
+func (gw *guiWin) showKeyProblems(cfg Config) {
+	if len(cfg.KeyProblems) == 0 {
+		return
+	}
+	for _, p := range cfg.KeyProblems {
+		L.Warn("config: shortcut", "problem", p)
+	}
+	gw.showBanner("Shortcuts: " + strings.Join(cfg.KeyProblems, ". ") + ".")
 }
 
 // apply pushes a config into the running window and every tab.
@@ -367,6 +396,7 @@ func (gw *guiWin) apply(cfg Config) {
 		guiApplyTheme(cfg.Theme)
 	}
 	gw.applyTabsLayout()
+	gw.applyAccels(cfg)
 	if gw.settings != nil {
 		gw.settings.load(cfg)
 	}

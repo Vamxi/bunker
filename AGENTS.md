@@ -21,7 +21,7 @@ It is used daily with Claude Code, Copilot CLI, btop, vim, and other TUI apps.
 ```
 main.go             Entry point — calls Execute()
 cmd.go              cobra root (GUI) and "tui" commands; run() for the TUI
-cmd_config.go       "bunker config" subcommand tree
+cmd_config.go       "bunker config" init/list/get/set, with a validator per setting
 gui.go              GTK application and window, actions, config watch/reload/apply
 gui_tabs.go         Tabs: one App + termView per tab in a GtkStack; tab strip, menu
 gui_view.go         termView widget: fonts, sizing, frame capture, release on close
@@ -31,11 +31,15 @@ gui_input.go        GDK keys → tcell events → keyToBytesMode; mouse; clipboa
 gui_ime.go          Input methods (dead keys, Compose, CJK, emoji picker)
 gui_links.go        Hyperlinks: OSC 8 and plain URLs, wrapped across rows
 gui_settings.go     Preferences window (writes keys through tomledit.go)
+gui_settings_keys.go Preferences > Keyboard: shortcut recorder, clash bar
+gui_shortcuts.go    Window shortcuts in GTK terms: matching, labels, accelerators
+gui_cursor.go       Cursor blinking ([cursor] blink)
 gui_style.go        Static CSS and theme-derived window chrome
 gui_debug.go        BUNKER_SCREENSHOT / BUNKER_KEYS / BUNKER_CPUPROFILE hooks
 desktop.go          Embedded icon, `install-desktop`, `themes` commands
 themes.go           Bundled Ptyxis palettes (themes/ptyxis)
 tomledit.go         Comment-preserving single-key TOML edits, atomic config writes
+shortcuts.go        Window shortcut table, key syntax, clash detection
 app.go              App (one tab's pane model), event loop, key handling
 input_modes.go      Application cursor/keypad encoding and focus forwarding
 pane.go             Pane: PTY spawn, readPTY, captureAndWrite, query replies
@@ -165,7 +169,9 @@ shows a banner.
 - `[tabs]` — `position` (left, right, top, bottom), `width`, `autohide`,
   `collapsed`.
 - `scrollback` (lines, default 10 000) and `scrollback_mb` per pane.
-- `[keys]` — action → key overrides; `[ui]` — border and scrollbar colours.
+- `[keys]` — every shortcut, window and pane (see shortcuts.go);
+  `[cursor] blink`; `[ui]` — border and scrollbar colours.
+- `bunker config list/get/set` reads and edits any of these from a shell.
 - `log_file` (the `--trace` file, default `/tmp/bunker.log`), `log_level`
   (without flags, default `warn`), `cell_aspect`.
 
@@ -207,6 +213,16 @@ shows a banner.
   through full segmentation.
 - The PTY pre-scanners jump between ESC bytes with `bytes.IndexByte`; their
   byte-at-a-time originals are kept in `scanref_test.go` as references.
+- Every shortcut is under `[keys]`: bunk's pane actions (`keybindingDefaults`)
+  and the window's (`windowShortcuts`), in one syntax (`ctrl+shift+t`, `f2`,
+  `none`; GTK's `<Control>Right` is converted). The window matches its keys
+  first, by keyval or by the key's unshifted keyval, so a window action wins
+  a clash; `findKeyClashes` reports clashes in a banner and on
+  `bunker config set`, and Preferences asks before moving a key. Adding a
+  setting to `bunker config` means adding it to `settings()` with a
+  validator.
+- `[cursor] blink` is system/on/off as in Ptyxis; blinking stops after
+  GNOME's blink timeout without input, so an idle window does not wake up.
 - Keyboard passthrough (Ctrl+F12) is per pane and also hands window shortcuts
   to the program; the PASS badge takes priority over other badges.
 - Kitty keyboard state belongs to the foreground process group that

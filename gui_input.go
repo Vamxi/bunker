@@ -57,6 +57,11 @@ func (v *termView) installInput() {
 
 func (v *termView) setFocused(focused bool) {
 	v.focused = focused
+	if focused {
+		v.kickBlink()
+	} else {
+		v.stopBlink()
+	}
 	v.imeFocus(focused)
 	v.app.mu.Lock()
 	p := v.app.active
@@ -75,10 +80,9 @@ func (v *termView) setFocused(focused bool) {
 // Keyboard
 // ---------------------------------------------------------------------------
 
-func (v *termView) keyPressed(keyval, _ uint, state gdk.ModifierType) bool {
+func (v *termView) keyPressed(keyval, keycode uint, state gdk.ModifierType) bool {
 	defer guiRecover("keyPressed")
-	ctrl := state&gdk.ControlMask != 0
-	shift := state&gdk.ShiftMask != 0
+	v.kickBlink()
 
 	v.app.mu.Lock()
 	p := v.app.active
@@ -96,7 +100,7 @@ func (v *termView) keyPressed(keyval, _ uint, state gdk.ModifierType) bool {
 
 	// With bunk's keyboard passthrough on (Ctrl+F12) every key except the
 	// toggle reaches the program, window shortcuts included.
-	if !passthrough && v.windowShortcut(keyval, ctrl, shift) {
+	if !passthrough && v.windowShortcut(keyval, keycode, state) {
 		return true
 	}
 
@@ -121,53 +125,62 @@ func (v *termView) keyPressed(keyval, _ uint, state gdk.ModifierType) bool {
 	return true
 }
 
-// windowShortcut handles bunker's own keys: tabs, preferences, clipboard,
-// font zoom. They use Ctrl+Shift or GNOME conventions so they don't collide
-// with bunk's bindings.
-func (v *termView) windowShortcut(keyval uint, ctrl, shift bool) bool {
-	if ctrl {
-		action := ""
-		switch lower := gdk.KeyvalToLower(keyval); {
-		case !shift && keyval == gdk.KEY_comma:
-			action = "win.preferences"
-		case shift && lower == gdk.KEY_t:
-			action = "win.new-tab"
-		case shift && lower == gdk.KEY_w:
-			action = "win.close-tab"
-		case !shift && (keyval == gdk.KEY_Page_Down || keyval == gdk.KEY_KP_Page_Down):
-			action = "win.next-tab"
-		case !shift && (keyval == gdk.KEY_Page_Up || keyval == gdk.KEY_KP_Page_Up):
-			action = "win.prev-tab"
-		}
-		if action != "" {
-			v.ActivateAction(action, nil)
-			return true
+// viewShortcut is one window shortcut, ready to match.
+type viewShortcut struct {
+	action string
+	key    guiKey
+}
+
+func viewShortcuts(keys map[string]string) []viewShortcut {
+	var out []viewShortcut
+	for _, w := range windowShortcuts {
+		if k, ok := parseGUIKey(keys[w.action]); ok {
+			out = append(out, viewShortcut{w.action, k})
 		}
 	}
-	if ctrl && shift {
-		switch gdk.KeyvalToLower(keyval) {
-		case gdk.KEY_c:
-			v.copySelection()
-			return true
-		case gdk.KEY_v:
-			v.pasteClipboard()
-			return true
-		case gdk.KEY_plus, gdk.KEY_equal:
-			v.zoomFont(1)
-			return true
-		case gdk.KEY_minus, gdk.KEY_underscore:
-			v.zoomFont(-1)
-			return true
-		case gdk.KEY_BackSpace, gdk.KEY_0, gdk.KEY_parenright:
-			v.zoomFont(0)
+	return out
+}
+
+// windowShortcut runs bunker's own action for a key press, if it is one
+// ([keys] new_tab, font_bigger, …; see shortcuts.go). It runs before bunk's
+// pane keys, so the window's action wins when a key is set for both.
+func (v *termView) windowShortcut(keyval, keycode uint, state gdk.ModifierType) bool {
+	for _, sc := range v.shortcuts {
+		if sc.key.matches(keyval, keycode, state) {
+			v.runShortcut(sc.action)
 			return true
 		}
-	}
-	if shift && !ctrl && (keyval == gdk.KEY_Insert || keyval == gdk.KEY_KP_Insert) {
-		v.pasteClipboard()
-		return true
 	}
 	return false
+}
+
+func (v *termView) runShortcut(action string) {
+	switch action {
+	case "new_tab":
+		v.ActivateAction("win.new-tab", nil)
+	case "close_tab":
+		v.ActivateAction("win.close-tab", nil)
+	case "next_tab":
+		v.ActivateAction("win.next-tab", nil)
+	case "prev_tab":
+		v.ActivateAction("win.prev-tab", nil)
+	case "preferences":
+		v.ActivateAction("win.preferences", nil)
+	case "close_window":
+		v.ActivateAction("win.close-window", nil)
+	case "copy_clipboard":
+		v.copySelection()
+	case "paste_clipboard", "paste_clipboard_alt":
+		v.pasteClipboard()
+	case "font_bigger":
+		v.zoomFont(1)
+	case "font_smaller":
+		v.zoomFont(-1)
+	case "font_reset":
+		v.zoomFont(0)
+	default:
+		L.Warn("gui: shortcut without a handler", "action", action)
+	}
 }
 
 // resetViewForInput mirrors App.forwardKey for raw byte input.

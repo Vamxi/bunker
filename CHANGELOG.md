@@ -3,6 +3,21 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
+## 0.3.0
+
+### Added
+
+- Every shortcut can be changed: the window's own (new tab, next and
+  previous tab, clipboard, text size, Preferences) join bunk's pane keys
+  under `[keys]`. Preferences > Keyboard records a new shortcut when you
+  click one and press the keys, and asks before taking a key another
+  action uses. A key set for two actions is shown in a banner.
+- `bunker config set`, `get`, and `list` change and read any setting from a
+  shell, with the same checks as Preferences. GTK's key spelling
+  (`<Control>Right`) is accepted.
+- The cursor blinks. `[cursor] blink` is `system` (the desktop setting, or
+  what the program asks for), `on`, or `off`, as in Ptyxis.
+
 ## 0.2.1
 
 ### Fixed
