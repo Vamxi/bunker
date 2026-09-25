@@ -137,7 +137,8 @@ make bench      # benchmarks, compared with bench/baseline.txt
 make build      # bin/bunker (linux/amd64, cgo + gtk4-devel)
 make run        # build and run with --trace
 make install    # ~/.local/bin/bunker plus the desktop entry
-make release VERSION=x.y.z   # tests, build, upload, publish CHANGELOG notes
+make rpm        # bin/bunker-VERSION-1.x86_64.rpm (needs nfpm)
+make release VERSION=x.y.z   # tests, RPM, upload, publish CHANGELOG notes
 ```
 
 TESTING.md lists every suite, the GUI harness, benchmarks, allocation guards,
@@ -209,7 +210,12 @@ shows a banner.
   logged at trace level through `Pane.feed`, `Pane.writePTY`, and
   `State.reply` rather than ignored.
 - Releases take an explicit `VERSION` and require a matching CHANGELOG.md
-  section, which becomes the release notes.
+  section, which becomes the release notes. A release carries one RPM
+  (`nfpm.yaml`): grm installs it with dnf, which brings the launcher, icons,
+  and GTK in one package. `make rpm` stages the launcher and icons with
+  `bunker install-desktop --data-dir … --exec /usr/bin/bunker`, so source
+  installs and the RPM ship the same files; `TestNFPMShipsWhatInstallDesktopStages`
+  keeps nfpm.yaml in step.
 - Only linux/amd64 is built: GTK is linked through cgo.
 - Every pane exports `BUNK=1`, so `bunk` and `bunker tui` refuse to nest
   inside bunker, and shell rc files can skip auto-starting bunk.

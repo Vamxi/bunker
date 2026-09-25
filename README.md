@@ -25,15 +25,18 @@
 
 ## Install
 
-Needs GTK 4 (already on GNOME desktops).
+bunker is released as an RPM for Fedora 43 and later. It installs the
+program, its launcher, and its icons, and pulls in GTK 4:
 
 ```bash
 grm install Vamxi/bunker
-bunker install-desktop    # adds bunker to the app grid and dock
 ```
 
-Or build and install it: `sudo dnf install gtk4-devel && make install` (the
-first build takes a few minutes).
+The RPM from the [releases page](https://github.com/Vamxi/bunker/releases)
+also installs with `sudo dnf install ./bunker-*.rpm`.
+
+To build from source instead: `sudo dnf install gtk4-devel && make install`
+(the first build takes a few minutes).
 
 ## Keys
 

@@ -23,6 +23,7 @@ make check       # fmt, vet, test, build, lint: the gate before a release
 | Allocation guards | `allocs_test.go`, `TestWriteDoesNotAllocate`, `TestCSIParseDoesNotAllocate` | hot paths allocate nothing in steady state |
 | Size guard | `internal/vt10x/glyph_test.go` | a cell stays 32 bytes |
 | Build gate | `makefile_test.go` | `make check` runs tests before building, even with `make -j` |
+| Packaging | `desktop_test.go` | the RPM (`nfpm.yaml`) ships exactly the launcher and icons `install-desktop` stages |
 
 ### GUI integration tests
 

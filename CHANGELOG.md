@@ -5,6 +5,12 @@ matching section as the GitHub release notes.
 
 ## Unreleased
 
+### Added
+
+- bunker is released as an RPM. `grm install Vamxi/bunker` installs it with
+  dnf, together with the launcher, the icons, and GTK 4; `bunker
+  install-desktop` is no longer needed for released builds.
+
 ### Changed
 
 - `--debug` now logs to stderr, and `--trace` writes `/tmp/bunker.log`

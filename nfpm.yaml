@@ -1,0 +1,40 @@
+# RPM for bunker: the binary, its launcher, and its icons. `make rpm` stages
+# the launcher and icons under bin/pkgroot with `bunker install-desktop`, so
+# they are the same files a source install writes.
+name: bunker
+arch: amd64
+platform: linux
+version: ${VERSION}
+release: 1
+maintainer: Vamsi <vamxikrishna95@gmail.com>
+description: A GTK4 terminal for Linux with the bunk multiplexer built in.
+homepage: https://github.com/Vamxi/bunker
+depends:
+  # gtk-interface-color-scheme (follow the desktop's light/dark) is GTK 4.20.
+  - gtk4 >= 4.20
+  - hicolor-icon-theme
+contents:
+  - src: bin/bunker_linux_amd64
+    dst: /usr/bin/bunker
+    file_info:
+      mode: 0755
+  - src: bin/pkgroot/usr/share/applications/dev.bunker.Bunker.desktop
+    dst: /usr/share/applications/dev.bunker.Bunker.desktop
+  - src: bin/pkgroot/usr/share/icons/hicolor/16x16/apps/dev.bunker.Bunker.png
+    dst: /usr/share/icons/hicolor/16x16/apps/dev.bunker.Bunker.png
+  - src: bin/pkgroot/usr/share/icons/hicolor/32x32/apps/dev.bunker.Bunker.png
+    dst: /usr/share/icons/hicolor/32x32/apps/dev.bunker.Bunker.png
+  - src: bin/pkgroot/usr/share/icons/hicolor/48x48/apps/dev.bunker.Bunker.png
+    dst: /usr/share/icons/hicolor/48x48/apps/dev.bunker.Bunker.png
+  - src: bin/pkgroot/usr/share/icons/hicolor/64x64/apps/dev.bunker.Bunker.png
+    dst: /usr/share/icons/hicolor/64x64/apps/dev.bunker.Bunker.png
+  - src: bin/pkgroot/usr/share/icons/hicolor/128x128/apps/dev.bunker.Bunker.png
+    dst: /usr/share/icons/hicolor/128x128/apps/dev.bunker.Bunker.png
+  - src: bin/pkgroot/usr/share/icons/hicolor/256x256/apps/dev.bunker.Bunker.png
+    dst: /usr/share/icons/hicolor/256x256/apps/dev.bunker.Bunker.png
+  - src: bin/pkgroot/usr/share/icons/hicolor/512x512/apps/dev.bunker.Bunker.png
+    dst: /usr/share/icons/hicolor/512x512/apps/dev.bunker.Bunker.png
+  - src: README.md
+    dst: /usr/share/doc/bunker/README.md
+  - src: CHANGELOG.md
+    dst: /usr/share/doc/bunker/CHANGELOG.md

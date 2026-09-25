@@ -87,10 +87,23 @@ release-version:
 	@if gh release view "v$(VERSION)" -R Vamxi/$(BINARY) >/dev/null 2>&1; then echo "v$(VERSION) is already released"; exit 1; fi
 	@grep -q '^## $(VERSION)$$' CHANGELOG.md || { echo "CHANGELOG.md has no '## $(VERSION)' section"; exit 1; }
 
-release: release-version build
-	tar -czf bin/$(BINARY)_linux_amd64.tar.gz --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_linux_amd64
+RPM = bin/$(BINARY)-$(VERSION)-1.x86_64.rpm
+
+# One package with the binary, launcher, and icons (see nfpm.yaml).
+rpm: build
+	@command -v nfpm >/dev/null 2>&1 || { \
+	  echo "nfpm is not installed. Install it with:"; \
+	  echo "  go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest"; \
+	  exit 1; \
+	}
+	rm -rf bin/pkgroot
+	bin/$(BINARY)_linux_amd64 install-desktop --data-dir bin/pkgroot/usr/share --exec /usr/bin/$(BINARY)
+	VERSION=$(VERSION) nfpm package --config nfpm.yaml --packager rpm --target $(RPM)
+
+# The release carries only the RPM: grm installs it with dnf.
+release: release-version rpm
 	GITHUB_TOKEN="$${GITHUB_TOKEN:-$$(gh auth token)}" grm release Vamxi/$(BINARY) \
-		-f bin/$(BINARY)_linux_amd64.tar.gz \
+		-f $(RPM) \
 		-t "v$(VERSION)"
 	awk '/^## /{p = ($$2 == "$(VERSION)"); next} p' CHANGELOG.md > bin/notes.md
 	gh release edit "v$(VERSION)" -R Vamxi/$(BINARY) --notes-file bin/notes.md
@@ -107,4 +120,4 @@ install: build
 clean:
 	rm -rf bin/ $(BINARY)
 
-.PHONY: build release release-version install test test-gui bench bench-baseline vet fmt lint check standards run clean
+.PHONY: build rpm release release-version install test test-gui bench bench-baseline vet fmt lint check standards run clean

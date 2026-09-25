@@ -81,18 +81,28 @@ StartupWMClass=%s
 `, exe, guiAppID, guiAppID)
 }
 
+// installDesktopDataDir and installDesktopExec let packaging stage the same
+// files under a build root (make rpm) instead of the user's data directory.
+var installDesktopDataDir, installDesktopExec string
+
 var installDesktopCmd = &cobra.Command{
 	Use:   "install-desktop",
 	Short: "Add bunker to the desktop's app grid and dock (~/.local/share)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		exe, err := os.Executable()
-		if err != nil {
-			return fmt.Errorf("find the bunker binary: %w", err)
+		exe := installDesktopExec
+		if exe == "" {
+			var err error
+			if exe, err = os.Executable(); err != nil {
+				return fmt.Errorf("find the bunker binary: %w", err)
+			}
+			if exe, err = filepath.EvalSymlinks(exe); err != nil {
+				return fmt.Errorf("find the bunker binary: %w", err)
+			}
 		}
-		if exe, err = filepath.EvalSymlinks(exe); err != nil {
-			return fmt.Errorf("find the bunker binary: %w", err)
+		share := installDesktopDataDir
+		if share == "" {
+			share = dataHome()
 		}
-		share := dataHome()
 		if err := writeIcons(filepath.Join(share, "icons")); err != nil {
 			return fmt.Errorf("install icons: %w", err)
 		}
@@ -123,6 +133,8 @@ var themesCmd = &cobra.Command{
 }
 
 func init() {
+	installDesktopCmd.Flags().StringVar(&installDesktopDataDir, "data-dir", "", "Install under this data directory instead of ~/.local/share.")
+	installDesktopCmd.Flags().StringVar(&installDesktopExec, "exec", "", "Program the launcher runs (default: this binary).")
 	rootCmd.AddCommand(installDesktopCmd)
 	rootCmd.AddCommand(themesCmd)
 }
