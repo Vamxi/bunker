@@ -3,6 +3,13 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
+## Unreleased
+
+### Faster
+
+- Plain output scrolls about 40% faster (`seq 1 2000000`: 0.83 s → 0.51 s):
+  scrolling now clears only the part of a line that was used.
+
 ## 0.1.1
 
 ### Fixed

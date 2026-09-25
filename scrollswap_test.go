@@ -11,22 +11,25 @@ import (
 func TestSbRing_SwapInEvictsOldest(t *testing.T) {
 	r := sbRing{maxLines: 2}
 	a, b, c := makeGlyphRowN(3, 'A'), makeGlyphRowN(3, 'B'), makeGlyphRowN(3, 'C')
-	if got := r.swapIn(a); len(got) != 3 || &got[0] == &a[0] {
-		t.Fatalf("filling ring must return a fresh buffer")
+	if got, used := r.swapIn(a, 3); len(got) != 3 || &got[0] == &a[0] || used != 3 {
+		t.Fatalf("filling ring must return a fresh buffer to clear in full (used %d)", used)
 	}
-	r.swapIn(b)
-	evicted := r.swapIn(c)
-	if &evicted[0] != &a[0] {
-		t.Fatalf("full ring must hand back the evicted oldest slot")
+	r.swapIn(b, 2)
+	evicted, used := r.swapIn(c, 3)
+	if &evicted[0] != &a[0] || used != 3 {
+		t.Fatalf("full ring must hand back the evicted oldest slot with its used count (got %d)", used)
 	}
 	if r.count != 2 || r.get(0)[0].Char != 'B' || r.get(1)[0].Char != 'C' {
 		t.Fatalf("ring = %c %c, want B C", r.get(0)[0].Char, r.get(1)[0].Char)
+	}
+	if _, used := r.swapIn(makeGlyphRowN(3, 'D'), 1); used != 2 {
+		t.Fatalf("evicted slot keeps the used count it was stored with: got %d, want 2", used)
 	}
 }
 
 func TestSbRing_SwapInDisabled(t *testing.T) {
 	r := sbRing{maxLines: 0}
-	if r.swapIn(makeGlyphRowN(3, 'A')) != nil || r.count != 0 {
+	if row, _ := r.swapIn(makeGlyphRowN(3, 'A'), 3); row != nil || r.count != 0 {
 		t.Fatal("scrollback off must not take the row")
 	}
 }

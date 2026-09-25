@@ -18,7 +18,7 @@ import "testing"
 // swap callback returns nil, so the terminal keeps (and clears) its row and
 // cb sees exactly what a copying consumer would.
 func newTestTermWithCb(cols, rows int, cb func(row []Glyph)) *terminal {
-	swap := func(row []Glyph) []Glyph { cb(row); return nil }
+	swap := func(row []Glyph, _ int) ([]Glyph, int) { cb(row); return nil, 0 }
 	return newTerminal(TerminalInfo{cols: cols, rows: rows, scrollSwapCb: swap})
 }
 

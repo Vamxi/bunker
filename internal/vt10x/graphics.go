@@ -74,7 +74,7 @@ func (t *State) paintGraphics(p *graphics.Placement) {
 			if top.A == 0 && bottom.A == 0 {
 				continue
 			}
-			old := t.lines[y][x]
+			old := t.lines[y].cells[x]
 			t.eraseWideAt(x, y)
 			// Composite over previous image samples without retaining a chain
 			// of old images. Remaining alpha is blended against the theme later.
@@ -83,7 +83,8 @@ func (t *State) paintGraphics(p *graphics.Placement) {
 			}
 			g := Glyph{Char: '▀', Width: 1, FG: DefaultFG, BG: old.BG, UL: DefaultUL}
 			g.SetImage(&ImageCell{Top: top, Bottom: bottom, Placement: identity})
-			t.lines[y][x] = g
+			t.lines[y].cells[x] = g
+			t.occupy(y, x+1)
 			t.markDirty(y)
 		}
 		if p.Move && row+1 < p.Rows {
@@ -117,7 +118,7 @@ func over(front, back color.NRGBA) color.NRGBA {
 func (t *State) deleteGraphics(d *graphics.Deletion) {
 	selected := make(map[*ImagePlacement]bool)
 	for y, row := range t.lines {
-		for x, g := range row {
+		for x, g := range row.cells[:row.used] {
 			if g.Image() == nil || g.Image().Placement.ID == 0 {
 				continue
 			}
@@ -145,7 +146,7 @@ func (t *State) deleteGraphics(d *graphics.Deletion) {
 		}
 	}
 	for y, row := range t.lines {
-		for x, g := range row {
+		for x, g := range row.cells[:row.used] {
 			if g.Image() != nil && selected[g.Image().Placement] {
 				t.eraseCell(x, y)
 				t.markDirty(y)

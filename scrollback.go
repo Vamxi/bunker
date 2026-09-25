@@ -38,8 +38,16 @@ import "bunker/internal/vt10x"
 type sbRing struct {
 	maxLines int             // ring capacity (from config scrollback setting)
 	lines    [][]vt10x.Glyph // allocated on first push, length = maxLines
+	used     []int           // per slot: cells from here on are blank (see vt10x.ScrollSwapFunc)
 	head     int             // index of the oldest entry
 	count    int             // number of valid entries (0 … maxLines)
+}
+
+func (s *sbRing) alloc() {
+	if s.lines == nil {
+		s.lines = make([][]vt10x.Glyph, s.maxLines)
+		s.used = make([]int, s.maxLines)
+	}
 }
 
 // push appends one captured row to the ring.  When the ring is full, the
@@ -52,9 +60,7 @@ func (s *sbRing) push(row []vt10x.Glyph) {
 	if s.maxLines <= 0 {
 		return
 	}
-	if s.lines == nil {
-		s.lines = make([][]vt10x.Glyph, s.maxLines)
-	}
+	s.alloc()
 
 	// Determine the destination slot.
 	var slot int
@@ -75,34 +81,37 @@ func (s *sbRing) push(row []vt10x.Glyph) {
 		s.lines[slot] = make([]vt10x.Glyph, len(row))
 	}
 	copy(s.lines[slot], row)
+	s.used[slot] = vt10x.UsedCells(row)
 }
 
-// swapIn stores row in the ring without copying, taking ownership of the
-// slice, and returns a same-length buffer the caller may overwrite: the
-// evicted oldest slot when the ring is full, otherwise a fresh allocation.
-// Returns nil (row not captured, caller keeps it) when scrollback is off.
-func (s *sbRing) swapIn(row []vt10x.Glyph) []vt10x.Glyph {
+// swapIn stores row, whose cells from used on are blank, in the ring without
+// copying, taking ownership of the slice. It returns a same-length buffer
+// the caller may overwrite, with its used count: the evicted oldest slot
+// when the ring is full, otherwise a fresh allocation. Returns nil (row not
+// captured, caller keeps it) when scrollback is off.
+func (s *sbRing) swapIn(row []vt10x.Glyph, used int) ([]vt10x.Glyph, int) {
 	if s.maxLines <= 0 {
-		return nil
+		return nil, 0
 	}
-	if s.lines == nil {
-		s.lines = make([][]vt10x.Glyph, s.maxLines)
-	}
-	var old []vt10x.Glyph
+	s.alloc()
+	var slot int
 	if s.count < s.maxLines {
-		slot := (s.head + s.count) % s.maxLines
-		old = s.lines[slot]
-		s.lines[slot] = row
+		slot = (s.head + s.count) % s.maxLines
 		s.count++
 	} else {
-		old = s.lines[s.head]
-		s.lines[s.head] = row
+		slot = s.head
 		s.head = (s.head + 1) % s.maxLines
 	}
-	if cap(old) >= len(row) {
-		return old[:len(row)]
+	old, oldUsed := s.lines[slot], s.used[slot]
+	s.lines[slot], s.used[slot] = row, used
+	switch {
+	case cap(old) < len(row):
+		return make([]vt10x.Glyph, len(row)), len(row)
+	case len(old) < len(row):
+		// Cells past the old row's end are stale; the caller clears them all.
+		return old[:len(row)], len(row)
 	}
-	return make([]vt10x.Glyph, len(row))
+	return old[:len(row)], min(oldUsed, len(row))
 }
 
 // clear empties the ring in place.  Backing row storage is kept so

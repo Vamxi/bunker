@@ -82,6 +82,10 @@ Key local extensions to vendored vt10x:
   terminal modes, attributes, callbacks, and hyperlink identities during reflow
 - DEC 12 cursor blink; DEC 2027 grapheme widths (enabled by default).
   `Glyph.Combining` stores an immutable grapheme suffix, bounded to 1 KiB/cell.
+- Rows track how many leading cells are used (`line.used`; the rest are
+  blank), so clearing and scrolling cost a line's length, not the width.
+  Every cell write goes through `occupy`; `TestUsedInvariant` fuzzes it, and
+  the scroll-swap callback passes used counts to and from scrollback.
 - DECRQSS reports SGR, scroll margins, and cursor style; unsupported settings
   return a negative response. Unknown DECRQM modes return status 0, not 4.
 

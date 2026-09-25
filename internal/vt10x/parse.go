@@ -25,11 +25,12 @@ func (t *State) parse(c rune) {
 			for x := t.cur.X; x < t.cols; x++ {
 				t.eraseWideAt(x, t.cur.Y)
 				t.eraseCell(x, t.cur.Y)
-				t.lines[t.cur.Y][x].Width = -2
+				t.lines[t.cur.Y].cells[x].Width = -2
 			}
 			t.markDirty(t.cur.Y)
 		}
-		t.lines[t.cur.Y][t.cols-1].Mode |= attrWrap
+		t.lines[t.cur.Y].cells[t.cols-1].Mode |= attrWrap
+		t.occupy(t.cur.Y, t.cols)
 		t.newline(true)
 	}
 	if t.cur.X+width > t.cols {

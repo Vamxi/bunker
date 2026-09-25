@@ -9,21 +9,32 @@ import (
 	"bunker/internal/benchdata"
 )
 
+// swapRing is a minimal scrollback for tests: it keeps the rows the
+// terminal hands over, with their used counts, and returns evicted ones.
+type swapRing struct {
+	rows [][]Glyph
+	used []int
+	head int
+}
+
+func newSwapRing(n int) *swapRing {
+	return &swapRing{rows: make([][]Glyph, n), used: make([]int, n)}
+}
+
+func (r *swapRing) swap(row []Glyph, used int) ([]Glyph, int) {
+	old, oldUsed := r.rows[r.head], r.used[r.head]
+	r.rows[r.head], r.used[r.head] = row, used
+	r.head = (r.head + 1) % len(r.rows)
+	if len(old) != len(row) {
+		return make([]Glyph, len(row)), len(row)
+	}
+	return old, oldUsed
+}
+
 func benchWrite(b *testing.B, data []byte) {
 	// Ring-buffer scrollback, like the pane's sbRing, so only the emulator
 	// is measured.
-	ring := make([][]Glyph, 1000)
-	head := 0
-	swap := func(row []Glyph) []Glyph {
-		old := ring[head]
-		ring[head] = row
-		head = (head + 1) % len(ring)
-		if len(old) != len(row) {
-			return make([]Glyph, len(row))
-		}
-		return old
-	}
-	term := New(WithSize(120, 40), WithScrollSwapCallback(swap))
+	term := New(WithSize(120, 40), WithScrollSwapCallback(newSwapRing(1000).swap))
 	b.SetBytes(int64(len(data)))
 	b.ResetTimer()
 	for b.Loop() {
@@ -149,17 +160,7 @@ func TestWriteDoesNotAllocate(t *testing.T) {
 		{"tui", benchdata.TUI(1, 120, 40)},
 	} {
 		t.Run(w.name, func(t *testing.T) {
-			ring := make([][]Glyph, 64)
-			head := 0
-			term := New(WithSize(120, 40), WithScrollSwapCallback(func(row []Glyph) []Glyph {
-				old := ring[head]
-				ring[head] = row
-				head = (head + 1) % len(ring)
-				if len(old) != len(row) {
-					return make([]Glyph, len(row))
-				}
-				return old
-			}))
+			term := New(WithSize(120, 40), WithScrollSwapCallback(newSwapRing(64).swap))
 			for range 4 { // fill the ring
 				term.Write(w.data) //nolint:errcheck
 			}

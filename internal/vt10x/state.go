@@ -157,16 +157,43 @@ func (g *Glyph) setExt(combining string, img *ImageCell) {
 	g.ext = &glyphExt{combining: combining, image: img}
 }
 
-type line []Glyph
+// line is one screen row. Cells at or past used are all blankGlyph, so
+// clearing a row only rewrites [0, used): scrolling a short line (a prompt,
+// seq output) costs its length rather than the terminal width. used may be
+// larger than needed, never smaller; every cell write goes through occupy.
+type line struct {
+	cells []Glyph
+	used  int
+}
 
-// makeLine allocates a line of n Glyphs with UL pre-set to DefaultUL so that
-// the zero value of Color (Black) is never confused with "no underline color".
+// blankGlyph is what an erase writes in the default colours, and what every
+// cell of a fresh line holds.
+var blankGlyph = Glyph{Char: ' ', Width: 1, FG: DefaultFG, BG: DefaultBG, UL: DefaultUL}
+
+// makeLine allocates a line of n blank cells.
 func makeLine(n int) line {
-	l := make(line, n)
-	for i := range l {
-		l[i].UL = DefaultUL
-	}
+	l := line{cells: make([]Glyph, n)}
+	fillBlank(l.cells, blankGlyph)
 	return l
+}
+
+// occupy records that cells [0, end) of row y may differ from blankGlyph;
+// end is at most t.cols.
+func (t *State) occupy(y, end int) {
+	if end > t.lines[y].used {
+		t.lines[y].used = end
+	}
+}
+
+// UsedCells reports how many leading cells of cells differ from a blank
+// cell in the default colours (trailing blank cells are not counted): the
+// used count a ScrollSwapFunc reports for a row it built itself.
+func UsedCells(cells []Glyph) int {
+	n := len(cells)
+	for n > 0 && cells[n-1] == blankGlyph {
+		n--
+	}
+	return n
 }
 
 type Cursor struct {
@@ -231,7 +258,7 @@ type State struct {
 	linkBytes int
 	// scrollSwapCb, if non-nil, is offered each row that scrolls off the top
 	// of the primary screen before it is cleared (see WithScrollSwapCallback).
-	scrollSwapCb func(row []Glyph) []Glyph
+	scrollSwapCb ScrollSwapFunc
 	// sbClearCb, if non-nil, is called when the application requests
 	// scrollback erasure via ED 3 (CSI 3 J) or RIS (ESC c).  Scrollback
 	// lives outside this State (which only holds the visible grid), so
@@ -317,7 +344,7 @@ func (t *State) Unlock() {
 // Cell returns the glyph containing the character code, foreground color, and
 // background color at position (x, y) relative to the top left of the terminal.
 func (t *State) Cell(x, y int) Glyph {
-	cell := t.lines[y][x]
+	cell := t.lines[y].cells[x]
 	fg, ok := t.colorOverride[cell.FG]
 	if ok {
 		cell.FG = fg
@@ -330,7 +357,7 @@ func (t *State) Cell(x, y int) Glyph {
 }
 
 // RawCell returns a glyph without resolving dynamic colour overrides.
-func (t *State) RawCell(x, y int) Glyph { return t.lines[y][x] }
+func (t *State) RawCell(x, y int) Glyph { return t.lines[y].cells[x] }
 
 // ImportGlyph translates hyperlink identities. The caller must synchronize
 // access to both terminals, as for Cell and Link.
@@ -358,7 +385,7 @@ func (t *State) ReplaceScreen(cols, rows int, cells [][]Glyph, cursor Cursor, so
 	blank := t.defaultCursor().Attr
 	blank.Char = ' '
 	for y := range t.lines {
-		for x := range t.lines[y] {
+		for x := range t.lines[y].cells {
 			g := blank
 			if y < len(cells) && x < len(cells[y]) {
 				g = cells[y][x]
@@ -367,8 +394,9 @@ func (t *State) ReplaceScreen(cols, rows int, cells [][]Glyph, cursor Cursor, so
 				}
 				g = t.ImportGlyph(g, source)
 			}
-			t.lines[y][x] = g
+			t.lines[y].cells[x] = g
 		}
+		t.lines[y].used = UsedCells(t.lines[y].cells)
 		t.repairWideRow(y)
 	}
 	t.cur.X, t.cur.Y = clamp(cursor.X, 0, cols-1), clamp(cursor.Y, 0, rows-1)
@@ -642,27 +670,29 @@ func (t *State) setChar(c rune, attr *Glyph, x, y int) {
 	if x+width > t.cols {
 		c, width = '\uFFFD', 1
 	}
-	t.eraseWideAt(x, y)
-	if width == 2 {
-		t.eraseWideAt(x+1, y)
+	row := t.lines[y].cells
+	if w := row[x].Width; w == -1 || w == 2 {
+		t.eraseWideAt(x, y)
 	}
-	t.lines[y][x] = *attr
-	t.lines[y][x].Char = c
-	t.lines[y][x].ext = nil
-	t.lines[y][x].Width = int8(width)
-	//if t.options.BrightBold && attr.Mode&attrBold != 0 && attr.FG < 8 {
-	if attr.Mode&attrBold != 0 && attr.FG < 8 {
-		t.lines[y][x].FG = attr.FG + 8
+	if width == 2 {
+		if w := row[x+1].Width; w == -1 || w == 2 {
+			t.eraseWideAt(x+1, y)
+		}
+	}
+	fg, bg := attr.FG, attr.BG
+	if attr.Mode&attrBold != 0 && fg < 8 {
+		fg += 8
 	}
 	if attr.Mode&attrReverse != 0 {
-		t.lines[y][x].FG = attr.BG
-		t.lines[y][x].BG = attr.FG
+		fg, bg = attr.BG, attr.FG
 	}
+	// This runs for every printed character: literals let the compiler store
+	// straight into the row instead of copying a cell assembled on the stack.
+	row[x] = Glyph{Char: c, FG: fg, BG: bg, UL: attr.UL, Mode: attr.Mode, Link: attr.Link, Width: int8(width)}
 	if width == 2 {
-		t.lines[y][x+1] = t.lines[y][x]
-		t.lines[y][x+1].Char = 0
-		t.lines[y][x+1].Width = -1
+		row[x+1] = Glyph{FG: fg, BG: bg, UL: attr.UL, Mode: attr.Mode, Link: attr.Link, Width: -1}
 	}
+	t.occupy(y, x+width)
 }
 
 func runeCellWidth(c rune) int {
@@ -673,11 +703,15 @@ func runeCellWidth(c rune) int {
 }
 
 func (t *State) eraseCell(x, y int) {
-	t.lines[y][x] = t.blankCell()
+	g := t.blankCell()
+	t.lines[y].cells[x] = g
+	if g != blankGlyph {
+		t.occupy(y, x+1)
+	}
 }
 
 func (t *State) eraseWideAt(x, y int) {
-	switch t.lines[y][x].Width {
+	switch t.lines[y].cells[x].Width {
 	case -1:
 		if x > 0 {
 			t.eraseCell(x-1, y)
@@ -691,9 +725,9 @@ func (t *State) eraseWideAt(x, y int) {
 
 func (t *State) repairWideRow(y int) {
 	for x := 0; x < t.cols; x++ {
-		switch t.lines[y][x].Width {
+		switch t.lines[y].cells[x].Width {
 		case 2:
-			if x+1 < t.cols && t.lines[y][x+1].Width == -1 {
+			if x+1 < t.cols && t.lines[y].cells[x+1].Width == -1 {
 				x++
 			} else {
 				t.eraseCell(x, y)
@@ -760,8 +794,10 @@ func (t *State) resize(cols, rows int) bool {
 		t.altLines[i] = makeLine(cols)
 	}
 	for i := 0; i < minrows; i++ {
-		copy(t.lines[i], lines[i])
-		copy(t.altLines[i], altLines[i])
+		copy(t.lines[i].cells, lines[i].cells)
+		t.lines[i].used = min(lines[i].used, mincols)
+		copy(t.altLines[i].cells, altLines[i].cells)
+		t.altLines[i].used = min(altLines[i].used, mincols)
 	}
 	copy(t.tabs, tabs)
 	if cols > t.cols {
@@ -805,16 +841,29 @@ func (t *State) clear(x0, y0, x1, y1 int) {
 	y0 = clamp(y0, 0, t.rows-1)
 	y1 = clamp(y1, 0, t.rows-1)
 	t.changed |= ChangedScreen
+	g := t.blankCell()
 	for y := y0; y <= y1; y++ {
 		t.markDirty(y)
-		start, end := x0, x1
-		if t.lines[y][start].Width == -1 && start > 0 {
+		l := &t.lines[y]
+		start, end := x0, x1+1
+		if l.cells[start].Width == -1 && start > 0 {
 			start--
 		}
-		if t.lines[y][end].Width == 2 && end+1 < t.cols {
+		if l.cells[end-1].Width == 2 && end < t.cols {
 			end++
 		}
-		fillBlank(t.lines[y][start:end+1], t.blankCell())
+		if g != blankGlyph {
+			fillBlank(l.cells[start:end], g)
+			l.used = max(l.used, end)
+			continue
+		}
+		// Cells from used on are already blank.
+		if start < l.used {
+			fillBlank(l.cells[start:min(end, l.used)], g)
+		}
+		if end >= l.used {
+			l.used = min(l.used, start)
+		}
 	}
 }
 
@@ -959,8 +1008,9 @@ func (t *State) scrollUp(orig, n int) {
 	// Only fire when orig == 0 — rows leaving the top of the visible screen.
 	if orig == 0 && t.scrollSwapCb != nil {
 		for i := 0; i < n; i++ {
-			if repl := t.scrollSwapCb([]Glyph(t.lines[i])); len(repl) == t.cols {
-				t.lines[i] = repl // cleared below
+			l := &t.lines[i]
+			if repl, used := t.scrollSwapCb(l.cells, l.used); len(repl) == t.cols {
+				*l = line{cells: repl, used: clamp(used, 0, t.cols)} // cleared below
 			}
 		}
 	}
@@ -1322,7 +1372,8 @@ func (t *State) insertBlanks(n int) {
 	if dst >= t.cols {
 		t.clear(t.cur.X, t.cur.Y, t.cols-1, t.cur.Y)
 	} else {
-		copy(t.lines[t.cur.Y][dst:dst+size], t.lines[t.cur.Y][src:src+size])
+		copy(t.lines[t.cur.Y].cells[dst:dst+size], t.lines[t.cur.Y].cells[src:src+size])
+		t.occupy(t.cur.Y, min(t.lines[t.cur.Y].used+n, t.cols))
 		for x := src; x < dst; x++ {
 			t.eraseCell(x, t.cur.Y)
 		}
@@ -1355,7 +1406,7 @@ func (t *State) deleteChars(n int) {
 	if src >= t.cols {
 		t.clear(t.cur.X, t.cur.Y, t.cols-1, t.cur.Y)
 	} else {
-		copy(t.lines[t.cur.Y][dst:dst+size], t.lines[t.cur.Y][src:src+size])
+		copy(t.lines[t.cur.Y].cells[dst:dst+size], t.lines[t.cur.Y].cells[src:src+size])
 		for x := t.cols - n; x < t.cols; x++ {
 			t.eraseCell(x, t.cur.Y)
 		}

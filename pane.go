@@ -511,17 +511,17 @@ func (p *Pane) sbCapacity(cols int) int {
 //
 // Alt-screen scrolls must be ignored: TUI apps (vim, htop, less) use the
 // alt-screen and their scroll events must not populate primary scrollback.
-func (p *Pane) onScrollSwap(row []vt10x.Glyph) []vt10x.Glyph {
+func (p *Pane) onScrollSwap(row []vt10x.Glyph, used int) ([]vt10x.Glyph, int) {
 	if p.term.Mode()&vt10x.ModeAltScreen != 0 {
-		return nil
+		return nil, 0
 	}
 	oldCount := p.sb.count
 	oldSbOff := p.sbOff
-	repl := p.sb.swapIn(row)
+	repl, replUsed := p.sb.swapIn(row, used)
 	if repl != nil {
 		p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
 	}
-	return repl
+	return repl, replUsed
 }
 
 // onScrollbackClear is the vt10x scrollback-erase callback installed in

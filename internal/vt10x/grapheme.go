@@ -24,7 +24,7 @@ func (t *State) extendGrapheme(c rune) bool {
 		return false
 	}
 	x, y := t.clusterX, t.clusterY
-	g := t.lines[y][x]
+	g := t.lines[y].cells[x]
 	// Fast path: an ASCII character after a plain ASCII cell always starts a
 	// new cluster (ASCII has no Extend, ZWJ, SpacingMark, or Prepend code
 	// points), so skip building the string and running segmentation. This
@@ -52,8 +52,9 @@ func (t *State) extendGrapheme(c rune) bool {
 			return true
 		}
 		t.eraseCell(x, y)
-		t.lines[y][x].Width = -2
-		t.lines[y][x].Mode |= attrWrap
+		t.lines[y].cells[x].Width = -2
+		t.lines[y].cells[x].Mode |= attrWrap
+		t.occupy(y, x+1)
 		t.markDirty(y)
 		t.newline(true)
 		x, y = t.cur.X, t.cur.Y
@@ -62,10 +63,11 @@ func (t *State) extendGrapheme(c rune) bool {
 		t.eraseWideAt(x+1, y)
 	}
 	g.Width = int8(width)
-	t.lines[y][x] = g
+	t.lines[y].cells[x] = g
 	if width == 2 {
-		t.lines[y][x+1] = Glyph{Width: -1, Mode: g.Mode, FG: g.FG, BG: g.BG, UL: g.UL, Link: g.Link}
+		t.lines[y].cells[x+1] = Glyph{Width: -1, Mode: g.Mode, FG: g.FG, BG: g.BG, UL: g.UL, Link: g.Link}
 	}
+	t.occupy(y, x+width)
 	t.markDirty(y)
 	t.clusterX, t.clusterY = x, y
 	t.cur.X, t.cur.Y = min(x+width, t.cols-1), y

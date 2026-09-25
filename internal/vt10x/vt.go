@@ -107,7 +107,7 @@ type TerminalInfo struct {
 	// scrollSwapCb is called synchronously inside scrollUp() for each row
 	// that leaves the top of the primary screen (orig == 0), before the row
 	// is cleared; see WithScrollSwapCallback.
-	scrollSwapCb func(row []Glyph) []Glyph
+	scrollSwapCb ScrollSwapFunc
 	// sbClearCb is called when the application requests scrollback erasure:
 	// ED 3 (CSI 3 J, the xterm E3 extension sent by clear(1)) or RIS
 	// (ESC c, sent by reset(1)).
@@ -155,14 +155,21 @@ func WithSize(cols, rows int) TerminalOption {
 	}
 }
 
-// WithScrollSwapCallback installs a callback that fires once per row
-// scrolled off the top of the primary screen, synchronously inside terminal
-// mutation code (it must be fast and non-blocking). It may take ownership of
-// the row slice by returning a replacement of the same length, whose
-// contents are overwritten (typically the scrollback slot it evicted); that
-// avoids copying every row. Returning nil leaves the row with the terminal,
-// valid only for the duration of the call.
-func WithScrollSwapCallback(fn func(row []Glyph) []Glyph) TerminalOption {
+// ScrollSwapFunc receives a row scrolled off the top of the primary screen
+// and how many of its leading cells are in use; the cells after those are
+// blank. It may take ownership of the row by returning a replacement of the
+// same length (typically the scrollback slot it evicted) together with the
+// replacement's own used count, under the same rule: cells from replUsed on
+// must be blank, as they were when that row left the terminal. That avoids
+// copying every row, and the terminal only clears the replacement's used
+// cells. Returning nil leaves the row with the terminal, valid only for the
+// duration of the call.
+type ScrollSwapFunc func(row []Glyph, used int) (repl []Glyph, replUsed int)
+
+// WithScrollSwapCallback installs fn, which fires once per row scrolled off
+// the top of the primary screen, synchronously inside terminal mutation code
+// (it must be fast and non-blocking).
+func WithScrollSwapCallback(fn ScrollSwapFunc) TerminalOption {
 	return func(info *TerminalInfo) {
 		info.scrollSwapCb = fn
 	}

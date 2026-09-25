@@ -50,7 +50,10 @@ func TestGraphicsCellsCursorAndDeletion(t *testing.T) {
 
 func TestGraphicsClippingScrollingAndAltScreen(t *testing.T) {
 	var history [][]Glyph
-	term := New(WithSize(3, 2), WithScrollSwapCallback(func(row []Glyph) []Glyph { history = append(history, append([]Glyph(nil), row...)); return nil }))
+	term := New(WithSize(3, 2), WithScrollSwapCallback(func(row []Glyph, _ int) ([]Glyph, int) {
+		history = append(history, append([]Glyph(nil), row...))
+		return nil, 0
+	}))
 	writeGraphics(t, term, "\x1b[1;3H\x1b_Ga=T,f=24,s=1,v=1,c=4,r=3,C=1;/wAA\x1b\\")
 	if len(history) != 0 || term.Cell(0, 1).Image() != nil || term.Cell(2, 1).Image() == nil {
 		t.Fatal("image wrapped or scrolled with C=1")
