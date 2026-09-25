@@ -3,7 +3,7 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
-## Unreleased
+## 0.2.0
 
 ### Added
 
