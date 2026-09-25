@@ -72,5 +72,4 @@ collapsed = false
 ## More
 
 - `bunker -- btop` runs a program instead of your shell
-- `bunker tui` runs bunk's multiplexer in the current terminal
 - [TESTING.md](TESTING.md): tests, benchmarks, and how not to regress
