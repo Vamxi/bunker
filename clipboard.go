@@ -144,24 +144,39 @@ func (app *App) pasteFromClipboard() bool {
 		}
 	}
 
-	// Normalize line endings to \r — the terminal convention for "Enter".
-	// The PTY line discipline (icrnl) converts \r → \n for the shell.
-	// Raw \n bypasses icrnl, and \r\n produces double newlines.
-	text = strings.ReplaceAll(text, "\r\n", "\r")
-	text = strings.ReplaceAll(text, "\n", "\r")
-
 	active.mu.Lock()
 	bracketed := active.term.Mode()&vt10x.ModeSetPaste != 0
 	active.mu.Unlock()
-
-	if bracketed {
-		active.writeInput([]byte("\x1b[200~"))
-	}
-	active.writeInput([]byte(text))
-	if bracketed {
-		active.writeInput([]byte("\x1b[201~"))
-	}
+	active.writeInput(pasteBytes(text, bracketed))
 	return true
+}
+
+// pasteBytes turns clipboard text into what a paste writes to the PTY.
+//
+// Line endings become \r, the terminal's Enter: the line discipline (icrnl)
+// maps \r to \n for the shell, raw \n bypasses icrnl, and \r\n would
+// double up.
+//
+// With bracketed paste on, the text is wrapped in ESC[200~ … ESC[201~ so the
+// shell treats it as text, and every ESC (and C1 CSI) inside is dropped.
+// Otherwise clipboard content ending in ESC[201~ would close the bracket
+// early and have the rest run as typed commands; since any program can set
+// the clipboard with OSC 52, that turns "cat a file, then paste" into code
+// execution. Removing ESC outright also defeats nested forms that a
+// one-pass removal of the marker would reassemble.
+func pasteBytes(text string, bracketed bool) []byte {
+	text = strings.ReplaceAll(text, "\r\n", "\r")
+	text = strings.ReplaceAll(text, "\n", "\r")
+	if !bracketed {
+		return []byte(text)
+	}
+	text = strings.Map(func(r rune) rune {
+		if r == 0x1b || r == 0x9b {
+			return -1
+		}
+		return r
+	}, text)
+	return []byte("\x1b[200~" + text + "\x1b[201~")
 }
 
 // readClipboard returns the current text clipboard contents using native tools.

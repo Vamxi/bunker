@@ -117,3 +117,27 @@ func TestPane_SbCapacity(t *testing.T) {
 		})
 	}
 }
+
+// TestPasteCannotEscapeBracketedMode: clipboard text (which any program can
+// set via OSC 52) must not end bracketed paste early, even with nested or
+// C1 forms of the end marker.
+func TestPasteCannotEscapeBracketedMode(t *testing.T) {
+	for _, evil := range []string{
+		"hi\x1b[201~rm -rf ~\n",
+		"hi\x1b[20\x1b[201~1~id\n", // reassembles after a one-pass removal
+		"hi\u009b201~id\n",         // C1 CSI
+		"\x1b[200~nested\x1b[201~",
+	} {
+		got := string(pasteBytes(evil, true))
+		inner := strings.TrimSuffix(strings.TrimPrefix(got, "\x1b[200~"), "\x1b[201~")
+		if strings.ContainsAny(inner, "\x1b\u009b") {
+			t.Errorf("paste of %q leaks an escape: %q", evil, got)
+		}
+		if !strings.HasPrefix(got, "\x1b[200~") || !strings.HasSuffix(got, "\x1b[201~") {
+			t.Errorf("paste of %q is not bracketed: %q", evil, got)
+		}
+	}
+	if got := string(pasteBytes("a\r\nb\nc", false)); got != "a\rb\rc" {
+		t.Errorf("unbracketed line endings: %q", got)
+	}
+}

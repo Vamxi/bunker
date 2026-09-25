@@ -23,19 +23,22 @@ else
 	$(info "Install monova with: grm install jsnjack/monova")
 endif
 
-# Everything, including the GUI integration tests when a display is
-# available (they skip otherwise). See TESTING.md.
-test:
-	go test $(PKG) github.com/gdamore/tcell/v2/... -count=1 $(RACEFLAGS)
+# GUI tests run on a private headless compositor when mutter is installed,
+# so they work with the screen locked and never touch the desktop session.
+HEADLESS := $(if $(shell command -v mutter 2>/dev/null),dbus-run-session -- ./scripts/headless-gui.sh)
 
-# Only the GUI integration tests (needs a Wayland or X display).
+# Everything, including the GUI integration tests. See TESTING.md.
+test:
+	$(HEADLESS) go test $(PKG) github.com/gdamore/tcell/v2/... -count=1 $(RACEFLAGS)
+
+# Only the GUI integration tests.
 test-gui:
-	go test . -run 'TestGUI_' -count=1 -v
+	$(HEADLESS) go test . -run 'TestGUI_' -count=1 -v
 
 # Benchmarks, compared with the committed baseline when there is one.
 bench:
 	mkdir -p bench
-	go test ./... -run '^$$' -bench . -benchmem -count 6 | tee bench/latest.txt
+	$(HEADLESS) go test ./... -run '^$$' -bench . -benchmem -count 6 | tee bench/latest.txt
 	@if [ -f bench/baseline.txt ]; then $(BENCHSTAT) bench/baseline.txt bench/latest.txt; fi
 
 # Accept the latest results as the new baseline (commit bench/baseline.txt).
@@ -89,7 +92,6 @@ release: build
 
 run: test
 	go build -o $(BINARY) .
-	> /tmp/bunk.log
 	./$(BINARY) --trace
 
 # Install the binary to ~/.local/bin and add bunker to the app grid.

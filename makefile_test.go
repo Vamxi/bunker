@@ -42,7 +42,7 @@ fi
 					t.Fatal(err)
 				}
 			}
-			cmd := exec.Command("make", "--no-print-directory", "-j8", "-f", makefile, "check", "MONOVA=")
+			cmd := exec.Command("make", "--no-print-directory", "-j8", "-f", makefile, "check", "MONOVA=", "HEADLESS=")
 			cmd.Dir = dir
 			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "BUNK_TEST_TOOLS="+dir, "BUNK_TEST_LOG="+logPath)
 			if fail {

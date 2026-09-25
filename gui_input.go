@@ -9,7 +9,6 @@ package main
 
 import (
 	"context"
-	"strings"
 
 	"bunker/internal/vt10x"
 
@@ -454,9 +453,8 @@ func (v *termView) pasteClipboard() {
 	})
 }
 
-// pasteText writes text as a paste: CR line endings, bracketed when the
-// application enabled DECSET 2004. Embedded paste-end markers are removed so
-// clipboard content cannot break out of bracketed mode.
+// pasteText writes text as a paste (see pasteBytes): CR line endings, and
+// bracketed without any ESC inside when the application enabled DECSET 2004.
 func (v *termView) pasteText(text string) {
 	v.app.mu.Lock()
 	p := v.app.active
@@ -464,16 +462,9 @@ func (v *termView) pasteText(text string) {
 	if p == nil || p.isDead() {
 		return
 	}
-	text = strings.ReplaceAll(text, "\r\n", "\r")
-	text = strings.ReplaceAll(text, "\n", "\r")
 	p.mu.Lock()
 	bracketed := p.term.Mode()&vt10x.ModeSetPaste != 0
 	p.mu.Unlock()
 	v.resetViewForInput(p)
-	if bracketed {
-		text = strings.ReplaceAll(text, "\x1b[201~", "")
-		p.writeInput([]byte("\x1b[200~" + text + "\x1b[201~"))
-		return
-	}
-	p.writeInput([]byte(text))
+	p.writeInput(pasteBytes(text, bracketed))
 }

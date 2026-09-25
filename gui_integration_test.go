@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/graphene"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
@@ -503,9 +504,11 @@ func TestGUI_Hyperlinks(t *testing.T) {
 // viewOrigin is the terminal view's position in the window, to turn view
 // coordinates into window-screenshot coordinates.
 func (w *testWin) viewOrigin() (int, int) {
-	var x, y float64
+	var x, y float32
 	onMain(func() {
-		x, y, _ = w.active.view.TranslateCoordinates(w.win, 0, 0)
+		if p, ok := w.active.view.ComputePoint(w.win, graphene.NewPointAlloc().Init(0, 0)); ok {
+			x, y = p.X(), p.Y()
+		}
 	})
 	return int(x), int(y)
 }

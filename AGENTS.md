@@ -166,7 +166,7 @@ a missing default file uses built-in defaults.
 Key fields agents may need to know about:
 - `theme` — built-in name (`terminal`, `default`, `solarized-dark`, `dracula`, `nord`) or custom palette
 - `scrollback` — per-pane scrollback line cap (default 10 000)
-- `log_file` — destination for `--debug` / `--trace` output (default `/tmp/bunk.log`)
+- `log_file` — destination for `--debug` / `--trace` output (default `~/.local/state/bunker/bunker.log`)
 - `cell_aspect` — fallback height/width ratio when the host terminal doesn't answer the pixel-size query
 - `[keybindings]` — overrides for split / zoom / quit / search / copy / paste
 - `[ui]` — hex colour overrides for borders and scrollbar
@@ -225,7 +225,7 @@ Key fields agents may need to know about:
 ## Gotchas
 
 - TUI owns stderr — do not write logs there. All diagnostic output goes
-  through `slog` to the trace file (`/tmp/bunk.log`). Errors that the user
+  through `slog` to the log file (`~/.local/state/bunker/bunker.log`). Errors that the user
   needs to see surface through the UI.
 - Vendored vt10x has local patches. Prefer fixing bugs there over working
   around them in the main code.

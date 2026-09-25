@@ -46,8 +46,13 @@ file on disk, tab actions.
 | `TestGUI_IME` | input-method text reaches the program and the search bar; composition drawn at the cursor, cursor location reported |
 | `TestGUI_WaylandIMStress` | rapid window/tab/entry churn on the Wayland input method, in a child process (this used to crash GTK) |
 
-They need a Wayland or X display (`WAYLAND_DISPLAY` / `DISPLAY`) and skip
-without one; `BUNKER_NO_GUI_TESTS=1` skips them explicitly. The harness
+`make test` runs them on a private headless GNOME compositor
+(`scripts/headless-gui.sh`: mutter with a virtual monitor and its own D-Bus
+session), so they pass with the screen locked and never touch your desktop.
+Without mutter they use the current display (`WAYLAND_DISPLAY` / `DISPLAY`),
+and skip without one; `BUNKER_NO_GUI_TESTS=1` skips them explicitly. A bare
+`go test` uses your desktop: a locked screen gives windows no frames, and
+the GUI tests then time out. The harness
 owns the process's main thread for GTK (`onMain`, `waitMain`) and keeps the
 GLib main loop running, so frame clocks, idles, and file monitors behave as
 in the app, with the same input method users have. One environment detail:

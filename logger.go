@@ -12,6 +12,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"syscall"
 )
 
 // LevelTrace is below Debug — logs raw PTY byte chunks for deep inspection.
@@ -32,7 +34,10 @@ func initLogger(path, level string) (cleanup func()) {
 
 	if path != "" {
 		var err error
-		f, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		os.MkdirAll(filepath.Dir(path), 0o700) //nolint:errcheck // OpenFile reports a real failure
+		// O_NOFOLLOW: a pre-planted symlink must not redirect (or truncate)
+		// another file, even when log_file points into a shared directory.
+		f, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
 		if err != nil {
 			// Can't open log file — silently disable logging.
 			f = nil

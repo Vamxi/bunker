@@ -456,6 +456,17 @@ var BuiltinThemes = map[string]ThemeDef{
 // Loader
 // ---------------------------------------------------------------------------
 
+// defaultLogFile is where --debug / --trace write: the user's state
+// directory, never a shared one. Trace logs contain terminal output.
+func defaultLogFile() string {
+	base := os.Getenv("XDG_STATE_HOME")
+	if base == "" {
+		home, _ := os.UserHomeDir()
+		base = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(base, configDirName, "bunker.log")
+}
+
 // DefaultConfigPath returns the XDG-compliant config file path.
 func DefaultConfigPath() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
@@ -477,7 +488,7 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 
 	fc := fileConfig{
 		Theme:    systemThemeName,
-		LogFile:  "/tmp/bunk.log",
+		LogFile:  defaultLogFile(),
 		LogLevel: "info",
 		Font:     defaultFont,
 		Window:   windowConfig{Padding: defaultPadding},
@@ -602,7 +613,8 @@ theme = "system"
 font = "Monospace 11"
 
 # Logging.  Set log_file = "" to disable logging entirely.
-log_file  = "/tmp/bunk.log"
+# (default: ~/.local/state/bunker/bunker.log; trace logs include output)
+# log_file = "/path/to/bunker.log"
 log_level = "info"  # trace | debug | info | warn | error
 
 # Cell pixel aspect ratio (cell height / cell width).

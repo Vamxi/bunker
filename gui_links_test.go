@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"bunker/internal/vt10x"
@@ -50,7 +52,6 @@ func TestSafeLink(t *testing.T) {
 		"https://example.com":         true,
 		"http://localhost:8080/x":     true,
 		"mailto:me@example.com":       true,
-		"file:///home/me/notes.txt":   true,
 		"file://localhost/etc/hosts":  true,
 		"file://elsewhere/etc/passwd": false,
 		"javascript:alert(1)":         false,
@@ -58,6 +59,27 @@ func TestSafeLink(t *testing.T) {
 		"x-scheme-handler:run":        false,
 		"https://":                    false,
 		"not a url":                   false,
+	} {
+		if got := safeLink(u); got != want {
+			t.Errorf("safeLink(%q) = %v, want %v", u, got, want)
+		}
+	}
+}
+
+func TestSafeLocalFile(t *testing.T) {
+	dir := t.TempDir()
+	doc := filepath.Join(dir, "notes.txt")
+	script := filepath.Join(dir, "run.sh")
+	launcher := filepath.Join(dir, "evil.desktop")
+	os.WriteFile(doc, []byte("hi"), 0o644)                             //nolint:errcheck
+	os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755)                 //nolint:errcheck
+	os.WriteFile(launcher, []byte("[Desktop Entry]\nExec=x\n"), 0o644) //nolint:errcheck
+	for u, want := range map[string]bool{
+		"file://" + doc:                           true,
+		"file://" + dir:                           true,
+		"file://" + script:                        false, // executable
+		"file://" + launcher:                      false, // launcher, even when not executable
+		"file://" + filepath.Join(dir, "missing"): false,
 	} {
 		if got := safeLink(u); got != want {
 			t.Errorf("safeLink(%q) = %v, want %v", u, got, want)

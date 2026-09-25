@@ -40,10 +40,10 @@ func writeDefaultConfig(force bool) error {
 	if _, err := os.Stat(path); err == nil && !force {
 		return fmt.Errorf("config file already exists: %s\nUse --force to overwrite", path)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(DefaultConfigTOML()), 0o640); err != nil {
+	if err := os.WriteFile(path, []byte(DefaultConfigTOML()), 0o600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	fmt.Printf("Written: %s\n", path)

@@ -1,6 +1,6 @@
 # Bunk's tcell patches
 
-Based on github.com/gdamore/tcell/v2 v2.13.9 (Apache-2.0).
+Based on github.com/gdamore/tcell/v2 v2.13.10 (Apache-2.0).
 The root package and terminfo sources/tests are retained; unused examples,
 web assets, encoding registration, and views packages are omitted.
 

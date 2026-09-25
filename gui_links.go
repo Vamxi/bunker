@@ -132,9 +132,25 @@ func safeLink(u string) bool {
 		return parsed.Opaque != ""
 	case "file":
 		host, _ := os.Hostname()
-		return parsed.Path != "" && (parsed.Host == "" || parsed.Host == "localhost" || strings.EqualFold(parsed.Host, host))
+		if parsed.Path == "" || (parsed.Host != "" && parsed.Host != "localhost" && !strings.EqualFold(parsed.Host, host)) {
+			return false
+		}
+		return safeLocalFile(parsed.Path)
 	}
 	return false
+}
+
+// safeLocalFile refuses what the desktop would run rather than show:
+// executable files and .desktop launchers. Directories and documents open.
+func safeLocalFile(path string) bool {
+	if strings.HasSuffix(strings.ToLower(path), ".desktop") {
+		return false
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return st.IsDir() || st.Mode().Perm()&0o111 == 0
 }
 
 // updateHoverLink tracks the link under the pointer for underline and
