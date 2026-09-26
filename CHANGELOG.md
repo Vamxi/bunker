@@ -3,7 +3,7 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
-## 0.3.0
+## 0.4.0
 
 ### Added
 
@@ -16,6 +16,15 @@ matching section as the GitHub release notes.
   that tab. Exit codes come from shell integration (OSC 133); without it,
   bunker notices when the shell gets the terminal back. Settings are under
   `[notify]` and in Preferences > Terminal.
+
+### Fixed
+
+- `bunker config set` created no file when the config did not exist yet and
+  the value equalled the default.
+
+## 0.3.0
+
+### Added
 
 - Every shortcut can be changed: the window's own (new tab, next and
   previous tab, clipboard, text size, Preferences) join bunk's pane keys
