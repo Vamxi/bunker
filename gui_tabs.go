@@ -48,6 +48,11 @@ type guiTab struct {
 	recollapse  bool   // rename expanded a collapsed sidebar; collapse after
 
 	menu *gtk.PopoverMenu // right-click menu, created on first use
+
+	id           int          // stable, for notifications
+	attention    tabAttention // unseen alert (gui_alerts.go)
+	dot          *gtk.Box     // shows it in the expanded strip
+	lastNotified time.Time
 }
 
 // newTabApp builds the pane model for one tab from the current config.
@@ -67,11 +72,13 @@ func newTabApp(cfg Config) *App {
 // newTab opens a tab running command (nil = login shell) in dir ("" = the
 // process cwd) and selects it.
 func (gw *guiWin) newTab(dir string, command []string) *guiTab {
-	t := &guiTab{gw: gw, app: newTabApp(gw.cfg)}
+	gw.nextTabID++
+	t := &guiTab{gw: gw, app: newTabApp(gw.cfg), id: gw.nextTabID}
 	app := t.app
 	view := newTermView(app, gw.cfg)
 	app.clipboard = gtkClipboard{view}
 	app.post = func(f func()) { coreglib.IdleAdd(f) }
+	app.onAlert = func(_ *Pane, a paneAlert) { coreglib.IdleAdd(func() { t.onAlert(a) }) }
 	t.view = view
 	view.onTitle = func(string) { t.refreshTitle() }
 	view.onSpawn = func(cols, rows int) (*Pane, error) {
@@ -82,6 +89,7 @@ func (gw *guiWin) newTab(dir string, command []string) *guiTab {
 		if err != nil {
 			return nil, fmt.Errorf("start pane: %w", err)
 		}
+		p.setAlertHook(app.paneAlert)
 		app.mu.Lock()
 		app.nextID++
 		app.root = newLeaf(p, 0, 0, cols+1, rows)
@@ -203,12 +211,18 @@ func (t *guiTab) buildRow() {
 	t.short.SetXAlign(0.5)
 	t.short.SetVAlign(gtk.AlignCenter)
 
+	t.dot = gtk.NewBox(gtk.OrientationHorizontal, 0)
+	t.dot.AddCSSClass("bunker-tab-dot")
+	t.dot.SetVAlign(gtk.AlignCenter)
+	t.dot.SetVisible(false)
+
 	t.row = gtk.NewBox(gtk.OrientationHorizontal, 6)
 	t.row.AddCSSClass("bunker-tab")
 	t.row.Append(t.short)
 	t.row.Append(t.title)
 	t.row.Append(t.info)
 	t.row.Append(t.entry)
+	t.row.Append(t.dot)
 	t.row.Append(closeBtn)
 
 	click := gtk.NewGestureClick()
@@ -380,6 +394,7 @@ func (t *guiTab) applyRowMode() {
 	t.entry.SetVisible(!collapsed && t.editing)
 	t.closeBtn.SetVisible(!collapsed)
 	t.info.SetVisible(!collapsed && t.info.Text() != "")
+	t.dot.SetVisible(!collapsed && t.attention != attentionNone)
 	if collapsed {
 		t.row.AddCSSClass("collapsed")
 	} else {
@@ -459,6 +474,9 @@ func (gw *guiWin) selectTab(t *guiTab) {
 	}
 	gw.active = t
 	t.row.AddCSSClass("active")
+	if gw.windowFocused() {
+		t.seen()
+	}
 	gw.stack.SetVisibleChild(t.view)
 	t.view.GrabFocus()
 	t.lastSeen = "" // force the window title to follow

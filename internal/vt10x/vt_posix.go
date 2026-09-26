@@ -15,6 +15,7 @@ func newTerminal(info TerminalInfo) *terminal {
 	t := &terminal{newState(info.w)}
 	t.scrollSwapCb = info.scrollSwapCb
 	t.sbClearCb = info.sbClearCb
+	t.alertCb = info.alertCb
 	t.init(info.cols, info.rows)
 	t.graphics, t.graphicsReply = info.graphics, info.graphicsReply
 	t.cellWidth, t.cellHeight = info.cellWidth, info.cellHeight

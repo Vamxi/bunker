@@ -34,6 +34,7 @@ gui_settings.go     Preferences window (writes keys through tomledit.go)
 gui_settings_keys.go Preferences > Keyboard: shortcut recorder, clash bar
 gui_shortcuts.go    Window shortcuts in GTK terms: matching, labels, accelerators
 gui_cursor.go       Cursor blinking ([cursor] blink)
+gui_alerts.go       Tab attention (dot / coloured letter) and desktop notifications
 gui_style.go        Static CSS and theme-derived window chrome
 gui_debug.go        BUNKER_SCREENSHOT / BUNKER_KEYS / BUNKER_CPUPROFILE hooks
 desktop.go          Embedded icon, `install-desktop`, `themes` commands
@@ -43,6 +44,7 @@ shortcuts.go        Window shortcut table, key syntax, clash detection
 app.go              App (one tab's pane model), event loop, key handling
 input_modes.go      Application cursor/keypad encoding and focus forwarding
 pane.go             Pane: PTY spawn, readPTY, captureAndWrite, query replies
+pane_alert.go       Bells, notifications, finished commands → alerts for the frontend
 ptystream.go        Bounded UTF-8/control framing before PTY parsing
 osc.go              OSC pre-scanner, passthrough of OSC 7/52/133
 graphics.go         Image colour blending, virtual pixels, raw-history trimming
@@ -65,6 +67,7 @@ internal/vt10x/     VT100/ANSI emulator (fork of github.com/hinshun/vt10x)
   csi.go            CSI dispatcher
   str.go            OSC, DCS, APC strings
   grapheme.go       Incremental grapheme assembly
+  alert.go          BEL, OSC 9/777/99 notifications, OSC 133 command boundaries
   uniinfo.go        Per-rune width and grapheme table filled from uniseg
   graphics.go       Image-to-cell painting, Kitty placement deletion
   status.go         DECRQSS setting serialization
@@ -221,6 +224,13 @@ shows a banner.
   `bunker config set`, and Preferences asks before moving a key. Adding a
   setting to `bunker config` means adding it to `settings()` with a
   validator.
+- Alerts: vt10x reports BEL, OSC 9/777/99, and OSC 133;C/D in stream order
+  (`WithAlertCallback`); the pane adds durations and, for shells without
+  OSC 133, a finished command when the shell gets the terminal back
+  (`foregroundChanged`, from the 1 s foreground poll). The GUI lights the
+  tab only when it is not in view, and notifies only while the window is
+  unfocused by default. GNotification uses the freedesktop backend because
+  a window process has no D-Bus name for GNOME to call back on click.
 - `[cursor] blink` is system/on/off as in Ptyxis; blinking stops after
   GNOME's blink timeout without input, so an idle window does not wake up.
 - Keyboard passthrough (Ctrl+F12) is per pane and also hands window shortcuts

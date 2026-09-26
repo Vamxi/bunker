@@ -148,6 +148,10 @@ func themeCSS(rt resolvedTheme) string {
 		"@text", mix(fg, bg, 0.08),
 		"@muted", mix(fg, bg, 0.30),
 		"@dim", mix(fg, bg, 0.45),
+		// Alert colours come from the theme's own green, red, and yellow.
+		"@ok", mix(rgb(rt.palette[2]), bg, 0),
+		"@bad", mix(rgb(rt.palette[1]), bg, 0),
+		"@warn", mix(rgb(rt.palette[3]), bg, 0),
 	).Replace(`
 window.bunker-window { background-color: @bg; }
 window.bunker-window headerbar {
@@ -175,7 +179,15 @@ window.bunker-window headerbar windowcontrols button:hover > image { background-
 .bunker-tab .bunker-tab-close { min-width: 22px; min-height: 22px; padding: 0; opacity: 0; }
 .bunker-tab:hover .bunker-tab-close, .bunker-tab.active .bunker-tab-close { opacity: 0.75; }
 .bunker-tab.collapsed { padding: 5px 0; }
-.bunker-tab-short { font-weight: bold; }
+.bunker-tab-short { font-weight: bold; border-radius: 6px; margin: 0 6px; padding: 1px 0; }
+.bunker-tab.attn { color: @fg; }
+.bunker-tab-dot { min-width: 8px; min-height: 8px; border-radius: 4px; margin: 0 3px; }
+.bunker-tab.attn-done .bunker-tab-dot { background-color: @ok; }
+.bunker-tab.attn-alert .bunker-tab-dot { background-color: @warn; }
+.bunker-tab.attn-failed .bunker-tab-dot { background-color: @bad; }
+.bunker-tab.collapsed.attn-done .bunker-tab-short { background-color: @ok; color: @bg; }
+.bunker-tab.collapsed.attn-alert .bunker-tab-short { background-color: @warn; color: @bg; }
+.bunker-tab.collapsed.attn-failed .bunker-tab-short { background-color: @bad; color: @bg; }
 .bunker-tab-info { color: @muted; font-size: 0.85em; }
 window.bunker-window headerbar .bunker-subtitle { color: @muted; font-size: 0.82em; }
 .bunker-tab-list.collapsed { padding: 6px 4px; }

@@ -106,6 +106,7 @@ type TerminalInfo struct {
 	// ED 3 (CSI 3 J, the xterm E3 extension sent by clear(1)) or RIS
 	// (ESC c, sent by reset(1)).
 	sbClearCb             func()
+	alertCb               func(Alert)
 	graphics              *graphics.Decoder
 	graphicsReply         func([]byte)
 	cellWidth, cellHeight int

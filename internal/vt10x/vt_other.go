@@ -16,6 +16,7 @@ type terminal struct {
 func newTerminal(info TerminalInfo) *terminal {
 	t := &terminal{newState(info.w)}
 	t.scrollSwapCb = info.scrollSwapCb
+	t.alertCb = info.alertCb
 	t.init(info.cols, info.rows)
 	return t
 }

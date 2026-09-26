@@ -53,6 +53,10 @@ file on disk, tab actions.
 | `TestGUI_RemappedShortcuts` | remapped window keys (F2, Ctrl+←/→) drive tabs; the old key is freed |
 | `TestGUI_RecordShortcut` | Preferences recorder: set, Esc, Backspace (off), clash asks before Replace, unusable pane keys explained |
 | `TestGUI_CursorBlink` | blink on hides and shows the cursor, stops after the timeout; off never blinks |
+| `TestGUI_AlertsLightUpBackgroundTabs` | bell, notification, finished and failed commands light a background tab; looking clears it |
+| `TestGUI_ShortCommandsAndVisibleTabsStayQuiet` | quick commands and the tab in view never light up |
+| `TestGUI_DesktopNotificationsOnlyWhenUnfocused` | desktop notifications only while the window is in the background |
+| `TestGUI_CollapsedTabShowsAlert` | the collapsed sidebar colours the tab's letter |
 | `TestGUI_WaylandIMStress` | rapid window/tab/entry churn on the Wayland input method, in a child process (this used to crash GTK) |
 
 `make test` runs them on a private headless GNOME compositor

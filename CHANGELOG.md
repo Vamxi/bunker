@@ -7,6 +7,16 @@ matching section as the GitHub release notes.
 
 ### Added
 
+- Tabs light up when they need you: a coloured dot in the sidebar or bar,
+  or the coloured number in the collapsed sidebar. Green: a command that ran
+  10 seconds or longer finished; red: it failed; yellow: a program rang the
+  bell or asked for a notification (OSC 9, 777, and 99, which Claude Code
+  can send). Looking at the tab clears it. While the window is in the
+  background, bunker also shows a desktop notification; clicking it opens
+  that tab. Exit codes come from shell integration (OSC 133); without it,
+  bunker notices when the shell gets the terminal back. Settings are under
+  `[notify]` and in Preferences > Terminal.
+
 - Every shortcut can be changed: the window's own (new tab, next and
   previous tab, clipboard, text size, Preferences) join bunk's pane keys
   under `[keys]`. Preferences > Keyboard records a new shortcut when you

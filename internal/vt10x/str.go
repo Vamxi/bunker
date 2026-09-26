@@ -171,6 +171,9 @@ func (t *State) handleSTR() {
 			}
 			// TODO: redraw on successful colour set
 		default:
+			if t.oscAlert(d, s.args) {
+				break
+			}
 			t.logf("unknown OSC command %d\n", d)
 			// TODO: s.dump()
 		}

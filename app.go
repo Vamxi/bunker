@@ -123,6 +123,9 @@ type App struct {
 	onEmpty func()
 	// clipboard replaces the TUI's clipboard tools (see clipboard.go).
 	clipboard clipboard
+	// onAlert receives the panes' alerts (pane_alert.go) on their reader
+	// goroutines; the GUI sets it before the first pane starts.
+	onAlert func(*Pane, paneAlert)
 	// post runs a function on the UI thread (the GTK main loop, or the
 	// event loop below). nil runs it at once, which tests rely on.
 	post func(func())
@@ -529,6 +532,13 @@ func (app *App) splitActive(inheritContext bool) {
 	})
 }
 
+// paneAlert forwards a pane's alert to the frontend, if it wants them.
+func (app *App) paneAlert(p *Pane, a paneAlert) {
+	if app.onAlert != nil {
+		app.onAlert(p, a)
+	}
+}
+
 // offUIThread runs slow work (external commands) where it cannot freeze the
 // UI; it pairs with onUIThread to hand the result back.
 func (app *App) offUIThread(work func()) {
@@ -723,6 +733,7 @@ func (app *App) splitPane(src *Pane, spawnArgs []string) {
 		return
 	}
 	L.Debug("splitActive: new pane created", "new_pane", newPane.id, "x", nx, "y", ny, "w", nw, "h", nh)
+	newPane.setAlertHook(app.paneAlert)
 	app.nextID++
 
 	node.split(newPane, d)

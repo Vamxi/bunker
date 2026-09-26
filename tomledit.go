@@ -24,14 +24,15 @@ import (
 // rename. It reports whether the file changed.
 func writeConfigKey(path, section, key, literal string) (bool, error) {
 	data, err := os.ReadFile(path)
+	missing := os.IsNotExist(err)
 	switch {
-	case os.IsNotExist(err):
+	case missing:
 		data = []byte(DefaultConfigTOML())
 	case err != nil:
 		return false, fmt.Errorf("read config: %w", err)
 	}
 	next := setTOMLKey(string(data), section, key, literal)
-	if next == string(data) {
+	if next == string(data) && !missing {
 		return false, nil
 	}
 	var check fileConfig

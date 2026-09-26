@@ -262,6 +262,8 @@ type State struct {
 	// lives outside this State (which only holds the visible grid), so
 	// erasure is delegated to the owner.  Not fired by init-time reset().
 	sbClearCb             func()
+	alertCb               func(Alert) // see WithAlertCallback
+	kittyTitle, kittyBody string      // OSC 99 chunks not yet finished
 	graphics              *graphics.Decoder
 	graphicsReply         func([]byte)
 	cellWidth, cellHeight int

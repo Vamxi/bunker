@@ -39,6 +39,9 @@ type settingsWindow struct {
 	scrollback   *gtk.SpinButton
 	scrollbackMB *gtk.SpinButton
 	cursorBlink  *gtk.DropDown
+	notifyDesk   *gtk.DropDown
+	notifySecs   *gtk.SpinButton
+	notifyBell   *gtk.Switch
 	status       *gtk.Label
 
 	keyRows    map[string]*keyRow // Keyboard page, by action
@@ -325,6 +328,29 @@ func (s *settingsWindow) buildTerminal(p *settingsPage) {
 		}
 	})
 	g.row("Memory cap (MiB)", "0 turns the cap off; wide windows keep fewer lines under a cap", s.scrollbackMB)
+
+	g = p.group("Alerts", "A tab you are not looking at lights up when a long command finishes (red if it failed), when a program rings the bell, or when it asks for a notification, as Claude Code can.")
+	s.notifySecs = spin(0, 3600, 5)
+	s.notifySecs.ConnectValueChanged(func() {
+		if !s.updating {
+			s.write("notify", "command_seconds", strconv.Itoa(s.notifySecs.ValueAsInt()))
+		}
+	})
+	g.row("Long commands (seconds)", "A command counts once it ran this long; 0 turns these alerts off", s.notifySecs)
+	s.notifyBell = gtk.NewSwitch()
+	s.notifyBell.NotifyProperty("active", func() {
+		if !s.updating {
+			s.write("notify", "bell", strconv.FormatBool(s.notifyBell.Active()))
+		}
+	})
+	g.row("Bell", "The bell (Ctrl+G) lights the tab", s.notifyBell)
+	s.notifyDesk = gtk.NewDropDownFromStrings([]string{"Window in the background", "Always", "Never"})
+	s.notifyDesk.NotifyProperty("selected", func() {
+		if i := int(s.notifyDesk.Selected()); !s.updating && i < len(notifyDesktopModes) {
+			s.write("notify", "desktop", tomlString(notifyDesktopModes[i]))
+		}
+	})
+	g.row("Desktop notifications", "Clicking one brings the window up on that tab", s.notifyDesk)
 }
 
 func (s *settingsWindow) buildAdvanced(p *settingsPage) {
@@ -383,6 +409,11 @@ func (s *settingsWindow) load(cfg Config) {
 	if i := slices.Index(cursorBlinkModes, cfg.Cursor.Blink); i >= 0 {
 		s.cursorBlink.SetSelected(uint(i))
 	}
+	if i := slices.Index(notifyDesktopModes, cfg.Notify.Desktop); i >= 0 {
+		s.notifyDesk.SetSelected(uint(i))
+	}
+	s.notifySecs.SetValue(float64(cfg.Notify.CommandSeconds))
+	s.notifyBell.SetActive(cfg.Notify.Bell)
 	s.loadKeys(cfg)
 }
 

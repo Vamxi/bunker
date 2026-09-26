@@ -38,6 +38,7 @@ type fileConfig struct {
 	Window       windowConfig      `toml:"window"`        // GUI window options
 	Tabs         tabsConfig        `toml:"tabs"`          // GUI tab bar options
 	Cursor       cursorConfig      `toml:"cursor"`        // GUI cursor options
+	Notify       notifyConfig      `toml:"notify"`        // GUI alerts
 	UI           uiOverride        `toml:"ui"`
 	Keys         map[string]string `toml:"keys"` // action → key string, e.g. "split" → "f1"
 }
@@ -51,6 +52,21 @@ type cursorConfig struct {
 	// for a blinking or steady cursor), "on", or "off".
 	Blink string `toml:"blink"`
 }
+
+type notifyConfig struct {
+	// Desktop is when a tab's alert also becomes a desktop notification:
+	// "unfocused" (only while the window is in the background), "always",
+	// or "never".
+	Desktop string `toml:"desktop"`
+	// CommandSeconds is how long a command must run before its end counts
+	// as an alert; 0 turns finished-command alerts off.
+	CommandSeconds int `toml:"command_seconds"`
+	// Bell makes the bell (^G) an alert.
+	Bell bool `toml:"bell"`
+}
+
+// notifyDesktopModes are the accepted [notify] desktop values.
+var notifyDesktopModes = []string{"unfocused", "always", "never"}
 
 // cursorBlinkModes are the accepted [cursor] blink values, as in Ptyxis.
 var cursorBlinkModes = []string{"system", "on", "off"}
@@ -397,6 +413,7 @@ type Config struct {
 	Keybindings     Keybindings
 	WindowKeys      map[string]string // window action → canonical key (shortcuts.go)
 	Cursor          cursorConfig
+	Notify          notifyConfig
 	UIOverrides     map[string]string // [ui] colours as written; "" = the theme's
 	// KeyProblems lists invalid shortcuts and keys set for two actions, so
 	// the window can show them; the config still loads.
@@ -510,6 +527,7 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 		Window:   windowConfig{Padding: defaultPadding},
 		Tabs:     tabsConfig{Position: defaultTabsSide, Width: defaultTabsWidth},
 		Cursor:   cursorConfig{Blink: "system"},
+		Notify:   notifyConfig{Desktop: "unfocused", CommandSeconds: 10, Bell: true},
 	}
 	if _, err := toml.DecodeFile(path, &fc); err != nil {
 		if explicit || !os.IsNotExist(err) {
@@ -566,6 +584,11 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 		paneKeys[e.action] = e.field(&panes).raw
 	}
 	problems = append(problems, findKeyClashes(windowKeys, paneKeys)...)
+	if !slices.Contains(notifyDesktopModes, fc.Notify.Desktop) {
+		problems = append(problems, fmt.Sprintf("notify.desktop %q is not one of %s; using unfocused", fc.Notify.Desktop, strings.Join(notifyDesktopModes, ", ")))
+		fc.Notify.Desktop = "unfocused"
+	}
+	fc.Notify.CommandSeconds = max(fc.Notify.CommandSeconds, 0)
 	if !slices.Contains(cursorBlinkModes, fc.Cursor.Blink) {
 		problems = append(problems, fmt.Sprintf("cursor.blink %q is not one of %s; using system", fc.Cursor.Blink, strings.Join(cursorBlinkModes, ", ")))
 		fc.Cursor.Blink = "system"
@@ -586,6 +609,7 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 		Keybindings:     panes,
 		WindowKeys:      windowKeys,
 		Cursor:          fc.Cursor,
+		Notify:          fc.Notify,
 		UIOverrides: map[string]string{
 			"active_border": fc.UI.ActiveBorder, "inactive_border": fc.UI.InactiveBorder,
 			"scrollbar_thumb": fc.UI.ScrollThumb, "scrollbar_track": fc.UI.ScrollTrack,
@@ -698,6 +722,16 @@ scrollbar_track = ""  # scrollbar background
 # blinking or steady cursor), "on" always blinks, "off" never does.
 [cursor]
 blink = "system"
+
+# Alerts.  A tab lights up when a command that ran command_seconds or longer
+# finishes (0 turns this off), when a program rings the bell, or when it asks
+# for a notification (OSC 9, 777, 99; Claude Code can).  desktop: also show a
+# desktop notification "unfocused" (window in the background), "always", or
+# "never".
+[notify]
+desktop         = "unfocused"
+command_seconds = 10
+bell            = true
 
 # Shortcuts: "mod+mod+key" with ctrl, alt, shift; keys are letters, digits,
 # f1-f24, up/down/left/right, pgup/pgdn, home/end, enter, escape, tab,

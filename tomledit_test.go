@@ -231,3 +231,16 @@ func TestWriteIconsAndDesktopEntry(t *testing.T) {
 		}
 	}
 }
+
+// Setting a value that equals the template's default still creates a
+// missing config file.
+func TestWriteConfigKeyCreatesFileForDefaultValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	changed, err := writeConfigKey(path, "", "theme", `"system"`)
+	if err != nil || !changed {
+		t.Fatalf("writeConfigKey = %v, %v; want the file created", changed, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+}

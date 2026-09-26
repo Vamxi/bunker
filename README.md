@@ -21,6 +21,9 @@
 - **GPU rendering**, one Go binary, no Electron
 - **Preferences** (Ctrl+,) that edit a plain config file; editor changes apply live
 - **Clickable links:** Ctrl+click URLs and `ls --hyperlink` links
+- **Alerts:** a tab lights up when a long command finishes (red if it
+  failed) or a program such as Claude Code asks for attention, with a
+  desktop notification while bunker is in the background
 - **Input methods:** dead keys, Compose, CJK, emoji picker
 
 ## Install

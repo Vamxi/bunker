@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -114,7 +115,15 @@ type Pane struct {
 	oscScan oscScanner
 
 	// Process and container tracking.  All protected by mu.
-	fgProcess     string // name of the current foreground process (e.g. "ssh", "sudo")
+	fgProcess string // name of the current foreground process (e.g. "ssh", "sudo")
+
+	// Alerts (pane_alert.go), under mu except alertHook.
+	alertHook     atomic.Pointer[func(*Pane, paneAlert)]
+	shellMarks    bool      // the shell sends OSC 133 command boundaries
+	cmdStart      time.Time // OSC 133;C of the running command
+	busySince     time.Time // a program other than the shell has the terminal since
+	busyName      string    // that program
+	lastBell      time.Time
 	containerID   string // active container name (updated live by trackFgProcess)
 	containerType string // "toolbox", "distrobox", "podman", "lxc", or ""
 	sshHost       string // remote hostname when fgProcess is "ssh" or "mosh"
@@ -260,7 +269,8 @@ func NewPane(id, x, y, w, h, scrollback, scrollbackBytes int, dir string, spawnA
 	}
 	p.sb = sbRing{maxLines: p.sbCapacity(w - 1)}
 	p.term = vt10x.New(vt10x.WithSize(w-1, h), vt10x.WithScrollSwapCallback(p.onScrollSwap),
-		vt10x.WithScrollbackClearCallback(p.onScrollbackClear), vt10x.WithGraphicsReply(p.writeInput), vt10x.WithCellPixels(cellWidth, cellHeight))
+		vt10x.WithScrollbackClearCallback(p.onScrollbackClear), vt10x.WithGraphicsReply(p.writeInput), vt10x.WithCellPixels(cellWidth, cellHeight),
+		vt10x.WithAlertCallback(p.onTerminalAlert))
 
 	// One-time container detection: read the shell process's own environ.
 	if cmd.Process != nil {

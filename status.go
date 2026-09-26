@@ -682,6 +682,7 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 		ct, cn, sshHost := lastCT, lastCN, lastSSHHost
 		if pgid != lastPGID {
 			lastPGID = pgid
+			p.foregroundChanged(pgid <= 0 || pgid == shellPid, name, time.Now())
 			ct, cn = "", ""
 			sshHost = ""
 

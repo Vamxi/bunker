@@ -60,6 +60,12 @@ type guiWin struct {
 	bannerTimer coreglib.SourceHandle
 	monitor     gio.FileMonitorrer
 	reloadTimer coreglib.SourceHandle
+
+	nextTabID int
+	// Tests replace these: whether the window has focus, and sending a
+	// desktop notification.
+	focusedFn func() bool
+	sendFn    func(id string, n *gio.Notification)
 }
 
 // runGUI starts the GTK application. command, when non-empty, replaces the
@@ -129,6 +135,7 @@ func (gw *guiWin) build(command []string) {
 	win.AddCSSClass("bunker-window")
 	gw.win = win
 	gw.installActions()
+	gw.installFocusTab()
 	win.SetTitlebar(gw.headerBar())
 	win.ConnectCloseRequest(func() bool {
 		gw.closeAllTabs()
