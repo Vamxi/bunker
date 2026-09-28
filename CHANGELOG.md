@@ -19,6 +19,12 @@ matching section as the GitHub release notes.
 
 ### Fixed
 
+- Backspace, Enter, and Tab send their usual bytes to programs that turn on
+  the kitty keyboard protocol's basic mode, as the protocol says; only
+  programs that ask for every key as an escape code get escape codes for
+  them. Backspace sent an escape code before, which some programs did not
+  take as Backspace, and a shell left behind by a program that crashed with
+  the mode on lost Enter.
 - `bunker config set` created no file when the config did not exist yet and
   the value equalled the default.
 

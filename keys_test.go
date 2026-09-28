@@ -355,21 +355,39 @@ func TestKeyToBytes(t *testing.T) {
 		// 6. Kitty CSI u for special keys (Enter, Tab, Backspace, Esc)
 		// -----------------------------------------------------------------
 		{
-			name:       "Kitty Enter no mods",
+			name:       "Kitty Enter no mods keeps legacy bytes",
 			ev:         keyEv(tcell.KeyEnter, 0),
 			kittyFlags: 1,
+			want:       "\r",
+		},
+		{
+			name:       "Kitty Tab no mods keeps legacy bytes",
+			ev:         keyEv(tcell.KeyTab, 0),
+			kittyFlags: 1,
+			want:       "\t",
+		},
+		{
+			name:       "Kitty Backspace no mods keeps legacy bytes",
+			ev:         keyEv(tcell.KeyBackspace2, 0),
+			kittyFlags: 1,
+			want:       "\x7f",
+		},
+		{
+			name:       "Kitty report-all Enter",
+			ev:         keyEv(tcell.KeyEnter, 0),
+			kittyFlags: 1 | 8,
 			want:       "\x1b[13u",
 		},
 		{
-			name:       "Kitty Tab no mods",
+			name:       "Kitty report-all Tab",
 			ev:         keyEv(tcell.KeyTab, 0),
-			kittyFlags: 1,
+			kittyFlags: 1 | 8,
 			want:       "\x1b[9u",
 		},
 		{
-			name:       "Kitty Backspace no mods",
+			name:       "Kitty report-all Backspace",
 			ev:         keyEv(tcell.KeyBackspace, 0),
-			kittyFlags: 1,
+			kittyFlags: 1 | 8,
 			want:       "\x1b[127u",
 		},
 		{

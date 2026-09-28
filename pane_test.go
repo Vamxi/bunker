@@ -1984,8 +1984,9 @@ func TestKittyStack_StaleAfterExit(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(40, 10))
 	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
 
-	// Simulate app enabling KKP but exiting without cleanup.
-	p.captureAndWrite([]byte("\x1b[>1u"))
+	// Simulate an app enabling KKP (every key as an escape code) but exiting
+	// without cleanup.
+	p.captureAndWrite([]byte("\x1b[>9u"))
 
 	p.mu.Lock()
 	staleFlags := 0

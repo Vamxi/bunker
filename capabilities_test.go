@@ -79,7 +79,8 @@ func TestCapabilityModes(t *testing.T) {
 		{"kUP5", vt10x.ModeAppCursor, 0, "\x1b[1;5A"},
 		{"kent", vt10x.ModeAppKeypad, 0, "\x1bOM"},
 		{"kent", vt10x.ModeAppKeypad, 1, "\x1b[57414;1u"},
-		{"kbs", 0, 1, "\x1b[127u"},
+		{"kbs", 0, 1, "\x7f"},
+		{"kbs", 0, 9, "\x1b[127u"},
 		{"kcbt", 0, 1, "\x1b[9;2u"},
 	} {
 		t.Run(tc.name+tc.want, func(t *testing.T) {
@@ -128,7 +129,7 @@ func TestCapabilityStreamOrdering(t *testing.T) {
 			input := screen + "\x1bP+q544e;436f;524742\x1b\\" +
 				"\x1b[?1h\x1bP+q6b75\x1b\\\x1b[?1l\x1bP+q6b75\x1b\\" +
 				"\x1b=\x1bP+q6b656e74\x1b\\\x1b>\x1bP+q6b656e74\x1b\\" +
-				"\x1b[>1u\x1bP+q6b6273\x1b\\\x1b[<u\x1bP+q6b6273\x1b\\END"
+				"\x1b[>9u\x1bP+q6b6273\x1b\\\x1b[<u\x1bP+q6b6273\x1b\\END"
 			var stream ptyStream
 			for _, b := range []byte(input) {
 				p.captureAndWrite(stream.scan([]byte{b}))

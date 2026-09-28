@@ -48,7 +48,8 @@ func TestGDKKeyEventBytes(t *testing.T) {
 		{"keypad digit", gdk.KEY_KP_5, 0, 0, 0, "5"},
 		{"keypad digit app mode", gdk.KEY_KP_5, 0, 0, vt10x.ModeAppKeypad, "\x1bOu"},
 		{"kitty ctrl c", gdk.KEY_c, ctrl, 1, 0, "\x1b[99;5u"},
-		{"kitty backspace", gdk.KEY_BackSpace, 0, 1, 0, "\x1b[127u"},
+		{"kitty backspace", gdk.KEY_BackSpace, 0, 1, 0, "\x7f"},
+		{"kitty report-all backspace", gdk.KEY_BackSpace, 0, 9, 0, "\x1b[127u"},
 		{"kitty ctrl space", gdk.KEY_space, ctrl, 1, 0, "\x1b[32;5u"},
 	}
 	for _, tt := range tests {

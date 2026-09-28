@@ -1031,6 +1031,11 @@ func keyToBytes(ev *tcell.EventKey, kittyFlags int) []byte {
 	k := ev.Key()
 
 	// CSI u encoding for special keys whose legacy form is ambiguous.
+	// Unmodified Enter, Tab, and Backspace keep their legacy bytes unless
+	// the app asked for every key as an escape code (flag 8): the kitty spec
+	// keeps them so a shell still works after a program exits without
+	// popping its flags.
+	reportAll := kittyFlags&8 != 0
 	if useCSIu {
 		cp := 0
 		km := kittyMod
@@ -1046,6 +1051,14 @@ func keyToBytes(ev *tcell.EventKey, kittyFlags int) []byte {
 			cp = 127
 		case tcell.KeyEsc:
 			cp = 27
+		}
+		if km == 1 && !reportAll {
+			switch cp {
+			case 13, 9:
+				cp = 0 // legacy below
+			case 127:
+				return []byte{0x7f} // tcell folds Backspace into ^H; the key sends DEL
+			}
 		}
 		if cp > 0 {
 			if km > 1 {
