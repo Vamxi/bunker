@@ -110,7 +110,11 @@ func (v *termView) keyPressed(keyval, keycode uint, state gdk.ModifierType) bool
 	}
 	if raw != nil {
 		if v.app.searchMode {
-			return true // the search bar takes typed text only
+			// The search bar takes typed text, and Backspace to edit it.
+			if keyval == gdk.KEY_BackSpace {
+				v.app.handleKey(tcell.NewEventKey(tcell.KeyBackspace2, 0, tcell.ModNone))
+			}
+			return true
 		}
 		v.resetViewForInput(p)
 		p.writeInput(raw)

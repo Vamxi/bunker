@@ -19,6 +19,7 @@ matching section as the GitHub release notes.
 
 ### Fixed
 
+- Backspace works in the search bar (Ctrl+F); it did nothing before.
 - Backspace, Enter, and Tab send their usual bytes to programs that turn on
   the kitty keyboard protocol's basic mode, as the protocol says; only
   programs that ask for every key as an escape code get escape codes for

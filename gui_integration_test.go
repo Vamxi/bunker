@@ -269,6 +269,14 @@ func TestGUI_Search(t *testing.T) {
 		}
 		return false
 	})
+	// Backspace edits the query.
+	w.key(gdk.KEY_BackSpace, 0)
+	w.key(gdk.KEY_BackSpace, 0)
+	onMain(func() {
+		if q := w.activeApp().searchQuery; q != "need" {
+			t.Errorf("after two Backspaces the query is %q, want %q", q, "need")
+		}
+	})
 	w.key(gdk.KEY_Escape, 0)
 	onMain(func() {
 		if w.activeApp().searchMode {
