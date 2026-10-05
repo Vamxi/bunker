@@ -319,7 +319,8 @@ func (t *guiTab) showMenu(x, y float64) {
 
 // tabColour is a colour a tab can be tagged with: one of the theme's own
 // (index into its palette), so tags match the terminal. gui_style.go draws
-// it as a stripe along the row, or a ring around the collapsed number.
+// it as a border around the row, shared with neighbours of the same colour,
+// or a ring around the collapsed number.
 type tabColour struct {
 	name, label string
 	index       int
@@ -398,6 +399,33 @@ func (t *guiTab) setColour(name string) {
 	t.colour = name
 	if name != "" {
 		t.row.AddCSSClass("tag-" + name)
+	}
+	t.gw.groupTags()
+}
+
+// groupTags marks where each tagged row sits in its run of neighbours with
+// the same colour, so the run shares one border. A tab on its own gets no
+// mark.
+func (gw *guiWin) groupTags() {
+	for i, t := range gw.tabs {
+		joinsPrev := t.colour != "" && i > 0 && gw.tabs[i-1].colour == t.colour
+		joinsNext := t.colour != "" && i+1 < len(gw.tabs) && gw.tabs[i+1].colour == t.colour
+		place := ""
+		switch {
+		case joinsPrev && joinsNext:
+			place = "group-mid"
+		case joinsNext:
+			place = "group-first"
+		case joinsPrev:
+			place = "group-last"
+		}
+		for _, c := range []string{"group-first", "group-mid", "group-last"} {
+			if c == place {
+				t.row.AddCSSClass(c)
+			} else {
+				t.row.RemoveCSSClass(c)
+			}
+		}
 	}
 }
 
@@ -604,6 +632,7 @@ func (gw *guiWin) closeTab(t *guiTab) {
 	for _, other := range gw.tabs {
 		other.applyRowMode() // numbers shift down
 	}
+	gw.groupTags() // closing a tab can bring two of a colour together
 
 	if len(gw.tabs) == 0 {
 		gw.win.Close()
@@ -659,7 +688,7 @@ func (gw *guiWin) buildLayout() *gtk.Box {
 	gw.stack.SetHExpand(true)
 	gw.stack.SetVExpand(true)
 
-	gw.strip = gtk.NewBox(gtk.OrientationVertical, 2)
+	gw.strip = gtk.NewBox(gtk.OrientationVertical, 0) // gaps are CSS margins, so a colour group can close them
 	gw.strip.AddCSSClass("bunker-tab-list")
 	gw.stripScroll = gtk.NewScrolledWindow()
 	gw.stripScroll.AddCSSClass("bunker-tabs")

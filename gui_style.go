@@ -188,12 +188,14 @@ window.bunker-window headerbar windowcontrols button:hover > image { background-
 .bunker-tabs.top { border-bottom: 1px solid @line; }
 .bunker-tabs.bottom { border-top: 1px solid @line; }
 .bunker-tab-list { padding: 6px; }
-.bunker-tab { padding: 5px 4px 5px 10px; border-radius: 7px; min-height: 26px; color: @muted; }
+.bunker-tab { padding: 3px 2px 3px 8px; border: 2px solid transparent; border-radius: 7px; min-height: 26px; color: @muted; }
+.bunker-tabs.left .bunker-tab:not(:first-child), .bunker-tabs.right .bunker-tab:not(:first-child) { margin-top: 2px; }
+.bunker-tabs.top .bunker-tab:not(:first-child), .bunker-tabs.bottom .bunker-tab:not(:first-child) { margin-left: 2px; }
 .bunker-tab:hover { background-color: @hover; }
 .bunker-tab.active { background-color: @selected; color: @fg; }
 .bunker-tab .bunker-tab-close { min-width: 22px; min-height: 22px; padding: 0; opacity: 0; }
 .bunker-tab:hover .bunker-tab-close, .bunker-tab.active .bunker-tab-close { opacity: 0.75; }
-.bunker-tab.collapsed { padding: 5px 0; }
+.bunker-tab.collapsed { padding: 5px 0; border-width: 0; }
 .bunker-tab-short { font-weight: bold; border-radius: 6px; margin: 0 6px; padding: 1px 0; }
 .bunker-tab.attn { color: @fg; }
 .bunker-tab-dot { min-width: 8px; min-height: 8px; border-radius: 4px; margin: 0 3px; }
@@ -207,15 +209,22 @@ window.bunker-window headerbar windowcontrols button:hover > image { background-
 window.bunker-window headerbar .bunker-subtitle { color: @muted; font-size: 0.82em; }
 .bunker-tab-list.collapsed { padding: 6px 4px; }
 .bunker-tab entry.bunker-tab-entry { min-height: 24px; padding: 0 6px; background-color: @bg; color: @fg; }
+.bunker-tabs .bunker-tab.group-mid:not(.collapsed), .bunker-tabs .bunker-tab.group-last:not(.collapsed) { margin: 0; }
+.bunker-tabs.left .bunker-tab.group-first:not(.collapsed), .bunker-tabs.right .bunker-tab.group-first:not(.collapsed) { border-bottom-width: 0; padding-bottom: 5px; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.bunker-tabs.left .bunker-tab.group-mid:not(.collapsed), .bunker-tabs.right .bunker-tab.group-mid:not(.collapsed) { border-top-width: 0; border-bottom-width: 0; padding-top: 5px; padding-bottom: 5px; border-radius: 0; }
+.bunker-tabs.left .bunker-tab.group-last:not(.collapsed), .bunker-tabs.right .bunker-tab.group-last:not(.collapsed) { border-top-width: 0; padding-top: 5px; border-top-left-radius: 0; border-top-right-radius: 0; }
+.bunker-tabs.top .bunker-tab.group-first, .bunker-tabs.bottom .bunker-tab.group-first { border-right-width: 0; padding-right: 4px; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.bunker-tabs.top .bunker-tab.group-mid, .bunker-tabs.bottom .bunker-tab.group-mid { border-left-width: 0; border-right-width: 0; padding-left: 10px; padding-right: 4px; border-radius: 0; }
+.bunker-tabs.top .bunker-tab.group-last, .bunker-tabs.bottom .bunker-tab.group-last { border-left-width: 0; padding-left: 10px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
 `)
-	// Tab tags: a stripe along the sidebar row's leading edge or under the
-	// bar's tab, and a ring around the collapsed number. The ring stands off
+	// Tab tags: a border around the row, shared by neighbours of the same
+	// colour (group-first/mid/last drop the inner edges and keep the content
+	// in place), and a ring around the collapsed number. The ring stands off
 	// the number, so an alert's fill in the same colour still shows it.
 	var tags strings.Builder
 	for _, c := range tabColours {
 		fmt.Fprintf(&tags, `
-.bunker-tabs.left .bunker-tab.tag-%[1]s:not(.collapsed), .bunker-tabs.right .bunker-tab.tag-%[1]s:not(.collapsed) { box-shadow: inset 3px 0 %[2]s; }
-.bunker-tabs.top .bunker-tab.tag-%[1]s, .bunker-tabs.bottom .bunker-tab.tag-%[1]s { box-shadow: inset 0 -3px %[2]s; }
+.bunker-tab.tag-%[1]s:not(.collapsed) { border-color: %[2]s; }
 .bunker-tab.collapsed.tag-%[1]s .bunker-tab-short { outline: 2px solid %[2]s; outline-offset: 1px; }
 .bunker-swatch.swatch-%[1]s { background-color: %[2]s; }
 `, c.name, mix(rgb(rt.palette[c.index]), bg, 0))

@@ -393,6 +393,51 @@ func TestGUI_TabColour(t *testing.T) {
 	})
 }
 
+// Neighbours of the same colour share one border: the run's rows are marked
+// first, mid, and last, a tab on its own is not, and closing the tab between
+// two of a colour joins them.
+func TestGUI_TabColourGroups(t *testing.T) {
+	w := newTestWin(t, "exec sleep 30", nil)
+	for range 4 {
+		w.key(gdk.KEY_T, ctrl|shift)
+	}
+	onMain(func() {
+		if len(w.tabs) != 5 {
+			t.Fatalf("%d tabs, want 5", len(w.tabs))
+		}
+		places := func() string {
+			var out []string
+			for _, tab := range w.tabs {
+				place := "-"
+				for _, p := range []string{"first", "mid", "last"} {
+					if tab.row.HasCSSClass("group-" + p) {
+						place = p
+					}
+				}
+				out = append(out, place)
+			}
+			return strings.Join(out, " ")
+		}
+		for i, c := range []string{"red", "red", "red", "", "blue"} {
+			w.tabs[i].setColour(c)
+		}
+		for _, step := range []struct {
+			what, want string
+			do         func()
+		}{
+			{"three red, none, blue", "first mid last - -", func() {}},
+			{"the middle red turns blue", "- - - - -", func() { w.tabs[1].setColour("blue") }},
+			{"the untagged tab turns blue", "- - - first last", func() { w.tabs[3].setColour("blue") }},
+			{"the first blue closes", "first last first last", func() { w.closeTab(w.tabs[1]) }},
+		} {
+			step.do()
+			if got := places(); got != step.want {
+				t.Errorf("%s: places %q, want %q", step.what, got, step.want)
+			}
+		}
+	})
+}
+
 // findWidget returns the widget under w (or w) with the given name.
 func findWidget(w gtk.Widgetter, name string) *gtk.Widget {
 	base := gtk.BaseWidget(w)

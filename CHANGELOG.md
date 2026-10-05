@@ -3,6 +3,19 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
+## 0.6.0
+
+### Added
+
+- Neighbouring tabs of the same colour share one border, so they read as a
+  group.
+
+### Changed
+
+- A colour-tagged tab has a border all the way round in the sidebar and the
+  bar, instead of a stripe along one edge. The collapsed sidebar keeps its
+  ring around the number.
+
 ## 0.5.0
 
 ### Added
