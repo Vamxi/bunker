@@ -340,6 +340,73 @@ func TestGUI_TabMenu(t *testing.T) {
 	})
 }
 
+// A colour chosen from the tab menu tags the row; another replaces it, None
+// clears it, and the menu checks the current one. The theme's CSS, tag
+// rules included, parses.
+func TestGUI_TabColour(t *testing.T) {
+	w := newTestWin(t, "exec sleep 30", map[string]string{"tabs.collapsed": "true"})
+	onMain(func() {
+		tab := w.active
+		tags := func() []string {
+			var on []string
+			for _, c := range tabColours {
+				if tab.row.HasCSSClass("tag-" + c.name) {
+					on = append(on, c.name)
+				}
+			}
+			return on
+		}
+		for _, choose := range []string{"blue", "red", ""} {
+			tab.showMenu(10, 10)
+			item := findWidget(tab.menu, tabColour{name: choose}.menuID())
+			if item == nil {
+				t.Fatalf("no Colour entry for %q in the tab menu", choose)
+			}
+			item.Emit("clicked")
+			if tab.menu.IsVisible() {
+				t.Errorf("choosing %q left the menu open", choose)
+			}
+			got := tags()
+			if tab.colour != choose || len(got) > 1 || strings.Join(got, "") != choose {
+				t.Errorf("after %q: colour %q, classes %v", choose, tab.colour, got)
+			}
+		}
+		tab.setColour("green")
+		tab.showMenu(10, 10)
+		for _, c := range tabColourChoices {
+			check := gtk.BaseWidget(findWidget(tab.menu, c.menuID()).FirstChild()).LastChild()
+			if checked := gtk.BaseWidget(check).Opacity() > 0; checked != (c.name == "green") {
+				t.Errorf("%s entry checked = %v with the tab green", c.label, checked)
+			}
+		}
+		tab.menu.Popdown()
+
+		// gotk4's ConnectParsingError crashes converting the GError, so
+		// count the errors without taking the arguments; GTK logs each one.
+		parseErrors := 0
+		css := gtk.NewCSSProvider()
+		css.Connect("parsing-error", func() { parseErrors++ })
+		css.LoadFromString(themeCSS(w.cfg.Theme))
+		if parseErrors > 0 {
+			t.Errorf("theme CSS: %d parse errors", parseErrors)
+		}
+	})
+}
+
+// findWidget returns the widget under w (or w) with the given name.
+func findWidget(w gtk.Widgetter, name string) *gtk.Widget {
+	base := gtk.BaseWidget(w)
+	if base.Name() == name {
+		return base
+	}
+	for c := base.FirstChild(); c != nil; c = gtk.BaseWidget(c).NextSibling() {
+		if found := findWidget(c, name); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
 func writeKey(t *testing.T, path, section, key, literal string) {
 	t.Helper()
 	if _, err := writeConfigKey(path, section, key, literal); err != nil {

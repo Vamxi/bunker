@@ -163,7 +163,9 @@ func TestUsedInvariant(t *testing.T) {
 func TestUsedStaysShortForShortLines(t *testing.T) {
 	term := newTerminal(TerminalInfo{w: io.Discard, cols: 80, rows: 5, scrollSwapCb: newSwapRing(4).swap})
 	for i := range 50 {
-		fmt.Fprintf(term, "%d\r\n", i)
+		if _, err := fmt.Fprintf(term, "%d\r\n", i); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for y, l := range term.lines {
 		if l.used > 2 {

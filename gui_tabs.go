@@ -8,6 +8,7 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strconv"
@@ -43,6 +44,7 @@ type guiTab struct {
 	closed   bool
 
 	customTitle string // set by renaming; "" = follow the program's title
+	colour      string // tag from the tab menu (tabColours); "" = none
 	editing     bool
 	renameFrom  string // entry text when editing started
 	recollapse  bool   // rename expanded a collapsed sidebar; collapse after
@@ -290,6 +292,7 @@ func (t *guiTab) showMenu(x, y float64) {
 	if t.customTitle != "" {
 		names.Append("Reset Name", "tab.reset-name")
 	}
+	names.AppendSubmenu("Colour", colourMenu())
 	closing := gio.NewMenu()
 	closing.Append("Close Tab", "tab.close")
 	if len(t.gw.tabs) > 1 {
@@ -306,9 +309,96 @@ func (t *guiTab) showMenu(x, y float64) {
 	} else {
 		t.menu.SetMenuModel(menu)
 	}
+	for _, c := range tabColourChoices {
+		t.menu.AddChild(t.colourItem(c), c.menuID())
+	}
 	rect := gdk.NewRectangle(int(x), int(y), 1, 1)
 	t.menu.SetPointingTo(&rect)
 	t.menu.Popup()
+}
+
+// tabColour is a colour a tab can be tagged with: one of the theme's own
+// (index into its palette), so tags match the terminal. gui_style.go draws
+// it as a stripe along the row, or a ring around the collapsed number.
+type tabColour struct {
+	name, label string
+	index       int
+}
+
+var tabColours = []tabColour{
+	{"red", "Red", 1},
+	{"yellow", "Yellow", 3},
+	{"green", "Green", 2},
+	{"cyan", "Cyan", 6},
+	{"blue", "Blue", 4},
+	{"purple", "Purple", 5},
+}
+
+// tabColourChoices is what the Colour submenu offers: tabColours and None.
+var tabColourChoices = append(slices.Clip(tabColours), tabColour{label: "None"})
+
+// menuID names c's custom child in the Colour submenu.
+func (c tabColour) menuID() string { return "colour-" + cmp.Or(c.name, "none") }
+
+// colourMenu is the Colour submenu. GTK menus show neither an icon nor
+// markup beside a label, so each entry is a placeholder for a custom child
+// (colourItem) that showMenu adds once the model is set.
+func colourMenu() *gio.Menu {
+	swatches, clear := gio.NewMenu(), gio.NewMenu()
+	for _, c := range tabColourChoices {
+		item := gio.NewMenuItem(c.label, "")
+		item.SetAttributeValue("custom", glib.NewVariantString(c.menuID()))
+		if c.name == "" {
+			clear.AppendItem(item)
+		} else {
+			swatches.AppendItem(item)
+		}
+	}
+	menu := gio.NewMenu()
+	menu.AppendSection("", swatches)
+	menu.AppendSection("", clear)
+	return menu
+}
+
+// colourItem is one entry of the Colour submenu: a swatch, the name, and a
+// check on the tab's current colour.
+func (t *guiTab) colourItem(c tabColour) *gtk.Button {
+	swatch := gtk.NewBox(gtk.OrientationHorizontal, 0)
+	swatch.AddCSSClass("bunker-swatch")
+	swatch.AddCSSClass("swatch-" + cmp.Or(c.name, "none"))
+	swatch.SetVAlign(gtk.AlignCenter)
+	label := gtk.NewLabel(c.label)
+	label.SetXAlign(0)
+	label.SetHExpand(true)
+	check := gtk.NewImageFromIconName("object-select-symbolic")
+	if c.name != t.colour {
+		check.SetOpacity(0) // keeps its space, so the entries line up
+	}
+	content := gtk.NewBox(gtk.OrientationHorizontal, 10)
+	content.Append(swatch)
+	content.Append(label)
+	content.Append(check)
+	btn := gtk.NewButton()
+	btn.SetChild(content)
+	btn.SetHasFrame(false)
+	btn.AddCSSClass("bunker-colour-item")
+	btn.SetName(c.menuID())
+	btn.ConnectClicked(func() {
+		t.menu.Popdown()
+		t.setColour(c.name)
+	})
+	return btn
+}
+
+// setColour tags the tab with a tabColours name, or clears the tag ("").
+func (t *guiTab) setColour(name string) {
+	if t.colour != "" {
+		t.row.RemoveCSSClass("tag-" + t.colour)
+	}
+	t.colour = name
+	if name != "" {
+		t.row.AddCSSClass("tag-" + name)
+	}
 }
 
 // refreshTitle updates the row (and the window, for the active tab).
@@ -666,7 +756,7 @@ func (gw *guiWin) updateStripVisibility() {
 	if gw.stripScroll == nil {
 		return
 	}
-	gw.stripScroll.SetVisible(!(gw.cfg.Tabs.Autohide && len(gw.tabs) <= 1))
+	gw.stripScroll.SetVisible(!gw.cfg.Tabs.Autohide || len(gw.tabs) > 1)
 }
 
 // pollTitles keeps tab titles current (cwd and foreground process change

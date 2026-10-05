@@ -3,6 +3,20 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
+## 0.5.0
+
+### Added
+
+- Tabs can be tagged with a colour from their right-click menu (Colour:
+  red, yellow, green, cyan, blue, purple, or None), taken from the theme's
+  palette. A tagged tab has a stripe along its edge in the sidebar or bar,
+  and a ring around its number in the collapsed sidebar, which still shows
+  when an alert fills the number.
+
+### Fixed
+
+- Backspace works in the search bar (Ctrl+F); it did nothing before.
+
 ## 0.4.0
 
 ### Added
@@ -19,7 +33,6 @@ matching section as the GitHub release notes.
 
 ### Fixed
 
-- Backspace works in the search bar (Ctrl+F); it did nothing before.
 - Backspace, Enter, and Tab send their usual bytes to programs that turn on
   the kitty keyboard protocol's basic mode, as the protocol says; only
   programs that ask for every key as an escape code get escape codes for

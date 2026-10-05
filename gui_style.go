@@ -48,7 +48,8 @@ func isDarkColor(c interface{ RGB() (int32, int32, int32) }) bool {
 	return r*299+g*587+b*114 < 128_000
 }
 
-// guiStaticCSS styles the banner and the Preferences window.
+// guiStaticCSS styles the banner, the Preferences window, and the tab
+// menu's Colour entries.
 const guiStaticCSS = `
 .bunker-banner {
 	background-color: #c01c28;
@@ -118,6 +119,20 @@ button.bunker-keycap.bunker-keycap-off label {
 .bunker-settings-sidebar {
 	padding: 8px 0;
 }
+popover.menu button.bunker-colour-item {
+	min-height: 30px;
+	padding: 0 12px;
+	border-radius: 6px;
+	font-weight: normal;
+}
+.bunker-swatch {
+	min-width: 12px;
+	min-height: 12px;
+	border-radius: 6px;
+}
+.bunker-swatch.swatch-none {
+	box-shadow: inset 0 0 0 1px alpha(currentColor, 0.5);
+}
 `
 
 // themeCSS derives the window chrome (header bar, tab strip) from the
@@ -138,7 +153,7 @@ func themeCSS(rt resolvedTheme) string {
 		}
 		return fmt.Sprintf("#%02x%02x%02x", c[0], c[1], c[2])
 	}
-	return strings.NewReplacer(
+	css := strings.NewReplacer(
 		"@bg", mix(bg, fg, 0),
 		"@sidebar", mix(bg, fg, 0.04),
 		"@hover", mix(bg, fg, 0.08),
@@ -193,4 +208,17 @@ window.bunker-window headerbar .bunker-subtitle { color: @muted; font-size: 0.82
 .bunker-tab-list.collapsed { padding: 6px 4px; }
 .bunker-tab entry.bunker-tab-entry { min-height: 24px; padding: 0 6px; background-color: @bg; color: @fg; }
 `)
+	// Tab tags: a stripe along the sidebar row's leading edge or under the
+	// bar's tab, and a ring around the collapsed number. The ring stands off
+	// the number, so an alert's fill in the same colour still shows it.
+	var tags strings.Builder
+	for _, c := range tabColours {
+		fmt.Fprintf(&tags, `
+.bunker-tabs.left .bunker-tab.tag-%[1]s:not(.collapsed), .bunker-tabs.right .bunker-tab.tag-%[1]s:not(.collapsed) { box-shadow: inset 3px 0 %[2]s; }
+.bunker-tabs.top .bunker-tab.tag-%[1]s, .bunker-tabs.bottom .bunker-tab.tag-%[1]s { box-shadow: inset 0 -3px %[2]s; }
+.bunker-tab.collapsed.tag-%[1]s .bunker-tab-short { outline: 2px solid %[2]s; outline-offset: 1px; }
+.bunker-swatch.swatch-%[1]s { background-color: %[2]s; }
+`, c.name, mix(rgb(rt.palette[c.index]), bg, 0))
+	}
+	return css + tags.String()
 }

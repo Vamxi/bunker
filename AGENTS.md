@@ -23,7 +23,7 @@ main.go             Entry point — calls Execute()
 cmd.go              cobra root (GUI) and "tui" commands; run() for the TUI
 cmd_config.go       "bunker config" init/list/get/set, with a validator per setting
 gui.go              GTK application and window, actions, config watch/reload/apply
-gui_tabs.go         Tabs: one App + termView per tab in a GtkStack; tab strip, menu
+gui_tabs.go         Tabs: one App + termView per tab in a GtkStack; tab strip, menu, colour tags
 gui_view.go         termView widget: fonts, sizing, frame capture, release on close
 gui_panes.go        Split-tree drawing: per-pane frames, separators, badges, search bar
 gui_glyphs.go       Procedural box drawing, blocks, braille
@@ -77,7 +77,7 @@ internal/vt10x/     VT100/ANSI emulator (fork of github.com/hinshun/vt10x)
 internal/graphics/  Bounded SIXEL, Kitty, and iTerm2 static image decoders
 internal/benchdata/ Benchmark workloads (seq, prose, colors, unicode, tui)
 
-third_party/tcell/  tcell v2.13.9 with bunk's patches (BUNK_PATCHES.md)
+third_party/tcell/  tcell v2.13.10 with bunk's patches (BUNK_PATCHES.md)
 third_party/gotk4/  gotk4 v0.4.1 with subclass fixes (BUNKER_PATCHES.md)
 themes/ptyxis/      The 20 bundled palettes
 assets/icon/        App icon in every hicolor size
@@ -263,6 +263,11 @@ shows a banner.
   it, and the Wayland input method holds its widget. Closing a tab clears the
   IM client, disposes the view and the row, and drops the tab's panes;
   `TestGUI_NoLeaks` guards it.
+- gotk4's `CSSProvider.ConnectParsingError` crashes converting the GError;
+  connect `"parsing-error"` with `Connect` and a no-argument func instead.
+- GTK menus show neither markup nor an icon beside a label; entries that need
+  either (the tab menu's Colour swatches) are custom children
+  (`PopoverMenu.AddChild`).
 - Never retain `gsk.RenderNode` values: gotk4 wraps them with GObject
   refcounting although they are not GObjects.
 - `third_party/gotk4` is a separate module (`./...` does not test it), and a

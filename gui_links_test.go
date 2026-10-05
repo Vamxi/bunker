@@ -163,7 +163,9 @@ func TestPlainURLAtCursorPlaced(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(cols, rows))
 	u := "https://example.com/" + strings.Repeat("x", 30)
 	for i := 0; i < len(u); i += cols {
-		fmt.Fprintf(term, "\x1b[%d;1H%s", i/cols+1, u[i:min(i+cols, len(u))])
+		if _, err := fmt.Fprintf(term, "\x1b[%d;1H%s", i/cols+1, u[i:min(i+cols, len(u))]); err != nil {
+			t.Fatal(err)
+		}
 	}
 	grid := make([][]vt10x.Glyph, rows)
 	for y := range grid {
