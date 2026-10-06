@@ -62,6 +62,9 @@ type guiWin struct {
 	reloadTimer coreglib.SourceHandle
 
 	nextTabID int
+	drag      *stripDrag // a tab being dragged along the strip
+	reordered bool       // tabs moved since the strip's last layout
+	sliding   bool       // the strip's slide animation is running
 	// Tests replace these: whether the window has focus, and sending a
 	// desktop notification.
 	focusedFn func() bool

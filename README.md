@@ -16,7 +16,7 @@
 
 - **bunk in every tab:** split panes, context-aware splits into the same
   container / SSH host / sudo, zoom, search, status badges
-- **Tabs** in a sidebar (collapsible) or a bar, renamable, colour-taggable, coloured by the theme
+- **Tabs** in a sidebar (collapsible) or a bar, renamable, colour-taggable, reorderable by dragging, coloured by the theme
 - **20 themes**, following your desktop's light/dark by default (`bunker themes`)
 - **GPU rendering**, one Go binary, no Electron
 - **Preferences** (Ctrl+,) that edit a plain config file; editor changes apply live
@@ -56,7 +56,8 @@ To build from source instead: `sudo dnf install gtk4-devel && make install`
 | `Ctrl+PgUp` / `Ctrl+PgDn` | Previous / next tab |
 | `Ctrl+,` | Preferences |
 
-Right-click a tab to rename it, tag it with a colour, or close it. Every shortcut can be changed in
+Right-click a tab to rename it, tag it with a colour, or close it; drag it
+to move it. Every shortcut can be changed in
 Preferences > Keyboard, under `[keys]` in the config, or from a shell.
 
 ## Configuration

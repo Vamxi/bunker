@@ -3,6 +3,21 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
+## 0.6.1
+
+### Added
+
+- Drag a tab to move it, up and down the sidebar or along the bar; the
+  other tabs make way as it goes.
+
+### Changed
+
+- A colour-tagged tab has a short rounded bar at its left edge in the
+  sidebar, and a line along its bottom edge in the bar, instead of a border
+  all the way round. Neighbouring tabs of the same colour join theirs into
+  one; in the sidebar it bends round the group's top and bottom corners
+  like a bracket. The collapsed sidebar keeps its ring around the number.
+
 ## 0.6.0
 
 ### Added

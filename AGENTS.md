@@ -24,6 +24,7 @@ cmd.go              cobra root (GUI) and "tui" commands; run() for the TUI
 cmd_config.go       "bunker config" init/list/get/set, with a validator per setting
 gui.go              GTK application and window, actions, config watch/reload/apply
 gui_tabs.go         Tabs: one App + termView per tab in a GtkStack; tab strip, menu, colour tags
+gui_strip.go        Tab strip layout: rows, gaps, dragging a tab with the others sliding
 gui_view.go         termView widget: fonts, sizing, frame capture, release on close
 gui_panes.go        Split-tree drawing: per-pane frames, separators, badges, search bar
 gui_glyphs.go       Procedural box drawing, blocks, braille
@@ -231,6 +232,10 @@ shows a banner.
   tab only when it is not in view, and notifies only while the window is
   unfocused by default. GNotification uses the freedesktop backend because
   a window process has no D-Bus name for GNOME to call back on click.
+- Tabs reorder with a `GestureDrag` on the strip (`installReorder`), not
+  GTK drag-and-drop, and the strip has its own layout manager
+  (`stripLayout`): the dragged tab follows the pointer and the others slide
+  out of its way, as in Ptyxis, with no drag icon or drop highlight.
 - `[cursor] blink` is system/on/off as in Ptyxis; blinking stops after
   GNOME's blink timeout without input, so an idle window does not wake up.
 - Keyboard passthrough (Ctrl+F12) is per pane and also hands window shortcuts
@@ -268,6 +273,9 @@ shows a banner.
 - GTK menus show neither markup nor an icon beside a label; entries that need
   either (the tab menu's Colour swatches) are custom children
   (`PopoverMenu.AddChild`).
+- gotk4 frees a `gsk.Transform` that GTK has taken over (the input of
+  `Translate`, the argument of `Widget.Allocate`): allocate with a
+  transform in C (`bunker_allocate_at` in gui_strip.go).
 - Never retain `gsk.RenderNode` values: gotk4 wraps them with GObject
   refcounting although they are not GObjects.
 - `third_party/gotk4` is a separate module (`./...` does not test it), and a

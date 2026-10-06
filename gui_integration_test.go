@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/graphene"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -74,19 +76,19 @@ func TestGUI_TabStripLayout(t *testing.T) {
 	w := newTestWin(t, "exec sleep 30", map[string]string{"tabs.width": "240"})
 	onMain(func() {
 		width, _ := w.stripScroll.SizeRequest()
-		if width != 240 || !w.sidebarBtn.IsVisible() {
-			t.Errorf("sidebar width %d (want 240), toggle visible %v", width, w.sidebarBtn.IsVisible())
+		if width != 240 || !w.sidebarBtn.IsVisible() || !w.active.bar.IsVisible() {
+			t.Errorf("sidebar width %d (want 240), toggle visible %v, tag bar %v", width, w.sidebarBtn.IsVisible(), w.active.bar.IsVisible())
 		}
 		w.win.ActivateAction("toggle-tabs", nil)
-		if width, _ = w.stripScroll.SizeRequest(); width != guiCollapsedWidth || !w.active.short.IsVisible() || w.active.title.IsVisible() {
-			t.Errorf("collapsed: width %d, short label %v, title %v", width, w.active.short.IsVisible(), w.active.title.IsVisible())
+		if width, _ = w.stripScroll.SizeRequest(); width != guiCollapsedWidth || !w.active.short.IsVisible() || w.active.title.IsVisible() || w.active.bar.IsVisible() {
+			t.Errorf("collapsed: width %d, short label %v, title %v, tag bar %v", width, w.active.short.IsVisible(), w.active.title.IsVisible(), w.active.bar.IsVisible())
 		}
 	})
 	writeKey(t, w.path, "tabs", "position", `"top"`)
 	onMain(func() {
 		w.reload()
-		if w.layout.Orientation() != gtk.OrientationVertical || w.sidebarBtn.IsVisible() || w.isCollapsed() {
-			t.Errorf("top bar: orientation %v, toggle visible %v, collapsed %v", w.layout.Orientation(), w.sidebarBtn.IsVisible(), w.isCollapsed())
+		if w.layout.Orientation() != gtk.OrientationVertical || w.sidebarBtn.IsVisible() || w.isCollapsed() || w.active.bar.IsVisible() {
+			t.Errorf("top bar: orientation %v, toggle visible %v, collapsed %v, tag bar %v", w.layout.Orientation(), w.sidebarBtn.IsVisible(), w.isCollapsed(), w.active.bar.IsVisible())
 		}
 		if w.active.title.XAlign() != 0.5 {
 			t.Errorf("bar titles should be centred, xalign %v", w.active.title.XAlign())
@@ -393,7 +395,7 @@ func TestGUI_TabColour(t *testing.T) {
 	})
 }
 
-// Neighbours of the same colour share one border: the run's rows are marked
+// Neighbours of the same colour share one bar: the run's rows are marked
 // first, mid, and last, a tab on its own is not, and closing the tab between
 // two of a colour joins them.
 func TestGUI_TabColourGroups(t *testing.T) {
@@ -434,6 +436,105 @@ func TestGUI_TabColourGroups(t *testing.T) {
 			if got := places(); got != step.want {
 				t.Errorf("%s: places %q, want %q", step.what, got, step.want)
 			}
+		}
+	})
+}
+
+// Dragging a tab moves it: the order, the strip, the numbers, and the colour
+// groups follow. While dragging, the tab goes after every other tab whose
+// middle its own middle has passed, and the answer does not change while the
+// strip catches up with a move, so the tab does not flicker between places.
+func TestGUI_TabReorder(t *testing.T) {
+	w := newTestWin(t, "exec sleep 30", nil)
+	for range 3 {
+		w.key(gdk.KEY_T, ctrl|shift)
+	}
+	onMain(func() {
+		if len(w.tabs) != 4 {
+			t.Fatalf("%d tabs, want 4", len(w.tabs))
+		}
+	})
+	var a, b, c, d *guiTab
+	names := map[*guiTab]string{}
+	order := func() string {
+		var out []string
+		for i, tab := range w.tabs {
+			out = append(out, names[tab])
+			if tab.short.Text() != strconv.Itoa(i+1) {
+				t.Errorf("tab %s at %d is numbered %s", names[tab], i, tab.short.Text())
+			}
+		}
+		var rows []string
+		for child := w.strip.FirstChild(); child != nil; child = gtk.BaseWidget(child).NextSibling() {
+			for tab, name := range names {
+				if coreglib.BaseObject(tab.row).Native() == coreglib.BaseObject(child).Native() {
+					rows = append(rows, name)
+				}
+			}
+		}
+		if strings.Join(rows, "") != strings.Join(out, "") {
+			t.Errorf("strip rows %v, tabs %v", rows, out)
+		}
+		return strings.Join(out, "")
+	}
+	onMain(func() {
+		a, b, c, d = w.tabs[0], w.tabs[1], w.tabs[2], w.tabs[3]
+		names[a], names[b], names[c], names[d] = "a", "b", "c", "d"
+		for i, colour := range []string{"red", "", "red", "blue"} {
+			w.tabs[i].setColour(colour)
+		}
+		for _, step := range []struct {
+			move *guiTab
+			to   int
+			want string
+		}{
+			{c, 1, "acbd"},
+			{c, 1, "acbd"}, // its own place
+			{c, 9, "acbd"}, // out of range
+			{a, 3, "cbda"},
+			{a, 0, "acbd"},
+		} {
+			w.moveTab(step.move, step.to)
+			if got := order(); got != step.want {
+				t.Errorf("move %s to %d: order %s, want %s", names[step.move], step.to, got, step.want)
+			}
+		}
+		if !a.row.HasCSSClass("group-first") || !c.row.HasCSSClass("group-last") {
+			t.Error("the two red tabs, now neighbours, should share one bar")
+		}
+	})
+	settle(400 * time.Millisecond) // the strip lays the rows out and they slide into place
+	var y float64
+	onMain(func() {
+		for _, tab := range w.tabs {
+			if tab.slide != 0 {
+				t.Errorf("tab %s still %.1f px from its place", names[tab], tab.slide)
+			}
+		}
+		for i, tab := range w.tabs {
+			r, _ := tab.row.ComputeBounds(w.strip)
+			if got := w.tabAt(float64(r.X()+r.Width()/2), float64(r.Y()+r.Height()/2)); got != tab {
+				t.Errorf("tabAt the middle of tab %d is %s", i, names[got])
+			}
+		}
+		y = w.tabs[2].slot + w.tabs[2].size/2 + 1
+		for _, tc := range []struct {
+			y    float64
+			want int
+		}{{-1e6, 0}, {y, 2}, {1e6, 3}} {
+			if got := w.dragTarget(a, tc.y); got != tc.want {
+				t.Errorf("dragging a to y=%v: index %d, want %d", tc.y, got, tc.want)
+			}
+		}
+		w.moveTab(a, 2)
+		if got := w.dragTarget(a, y); got != 2 || order() != "cbad" {
+			t.Errorf("before the strip lays out the move: index %d, order %s", got, order())
+		}
+	})
+	settle(200 * time.Millisecond)
+	onMain(func() {
+		if got := w.dragTarget(a, y); got != 2 {
+			t.Errorf("after the strip lays out the move: index %d, want 2", got)
 		}
 	})
 }

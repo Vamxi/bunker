@@ -35,6 +35,7 @@ type guiTab struct {
 	view *termView
 
 	row      *gtk.Box
+	bar      *gtk.Box   // colour tag in the expanded sidebar
 	short    *gtk.Label // one-character label for the collapsed sidebar
 	closeBtn *gtk.Button
 	title    *gtk.Label
@@ -48,6 +49,11 @@ type guiTab struct {
 	editing     bool
 	renameFrom  string // entry text when editing started
 	recollapse  bool   // rename expanded a collapsed sidebar; collapse after
+
+	// Along the strip, from its last layout (gui_strip.go): where the row
+	// belongs, its length, and how far from there it is drawn while it
+	// slides into place.
+	slot, size, slide float64
 
 	menu *gtk.PopoverMenu // right-click menu, created on first use
 
@@ -165,6 +171,7 @@ func (t *guiTab) buildRow() {
 	// from a fallback font (Claude Code's ✳) whose taller line metrics
 	// would otherwise push the text off-centre.
 	t.title = gtk.NewLabel("shell")
+	t.title.AddCSSClass("bunker-tab-title")
 	t.title.SetXAlign(t.gw.tabTextAlign())
 	t.title.SetHExpand(true)
 	t.title.SetVAlign(gtk.AlignCenter)
@@ -218,8 +225,12 @@ func (t *guiTab) buildRow() {
 	t.dot.SetVAlign(gtk.AlignCenter)
 	t.dot.SetVisible(false)
 
+	t.bar = gtk.NewBox(gtk.OrientationVertical, 0)
+	t.bar.AddCSSClass("bunker-tab-bar")
+
 	t.row = gtk.NewBox(gtk.OrientationHorizontal, 6)
 	t.row.AddCSSClass("bunker-tab")
+	t.row.Append(t.bar)
 	t.row.Append(t.short)
 	t.row.Append(t.title)
 	t.row.Append(t.info)
@@ -319,7 +330,7 @@ func (t *guiTab) showMenu(x, y float64) {
 
 // tabColour is a colour a tab can be tagged with: one of the theme's own
 // (index into its palette), so tags match the terminal. gui_style.go draws
-// it as a border around the row, shared with neighbours of the same colour,
+// it as a bar along the row, unbroken across neighbours of the same colour,
 // or a ring around the collapsed number.
 type tabColour struct {
 	name, label string
@@ -404,7 +415,7 @@ func (t *guiTab) setColour(name string) {
 }
 
 // groupTags marks where each tagged row sits in its run of neighbours with
-// the same colour, so the run shares one border. A tab on its own gets no
+// the same colour, so the run's bar is unbroken. A tab on its own gets no
 // mark.
 func (gw *guiWin) groupTags() {
 	for i, t := range gw.tabs {
@@ -508,6 +519,7 @@ func (t *guiTab) applyRowMode() {
 	collapsed := t.gw.isCollapsed()
 	t.short.SetText(t.shortLabel())
 	t.short.SetVisible(collapsed)
+	t.bar.SetVisible(!collapsed && t.gw.sidebar())
 	t.title.SetVisible(!collapsed && !t.editing)
 	t.entry.SetVisible(!collapsed && t.editing)
 	t.closeBtn.SetVisible(!collapsed)
@@ -688,8 +700,11 @@ func (gw *guiWin) buildLayout() *gtk.Box {
 	gw.stack.SetHExpand(true)
 	gw.stack.SetVExpand(true)
 
-	gw.strip = gtk.NewBox(gtk.OrientationVertical, 0) // gaps are CSS margins, so a colour group can close them
+	// A GtkBox for Append and Remove, laid out by stripLayout (gui_strip.go).
+	gw.strip = gtk.NewBox(gtk.OrientationVertical, 0)
+	gw.strip.SetLayoutManager(newStripLayout(gw))
 	gw.strip.AddCSSClass("bunker-tab-list")
+	gw.installReorder()
 	gw.stripScroll = gtk.NewScrolledWindow()
 	gw.stripScroll.AddCSSClass("bunker-tabs")
 	gw.stripScroll.SetChild(gw.strip)
@@ -717,14 +732,12 @@ func (gw *guiWin) applyTabsLayout() {
 			width = guiCollapsedWidth
 		}
 		gw.layout.SetOrientation(gtk.OrientationHorizontal)
-		gw.strip.SetOrientation(gtk.OrientationVertical)
 		gw.stripScroll.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
 		gw.stripScroll.SetSizeRequest(width, -1)
 		gw.stripScroll.SetHExpand(false)
 		gw.stripScroll.SetVExpand(true)
 	} else {
 		gw.layout.SetOrientation(gtk.OrientationVertical)
-		gw.strip.SetOrientation(gtk.OrientationHorizontal)
 		gw.stripScroll.SetPolicy(gtk.PolicyAutomatic, gtk.PolicyNever)
 		gw.stripScroll.SetSizeRequest(-1, -1)
 		gw.stripScroll.SetHExpand(true)
@@ -765,11 +778,17 @@ func (gw *guiWin) applyTabsLayout() {
 	}
 }
 
-// isCollapsed reports whether the sidebar shows one character per tab;
-// collapsing only applies to a left or right sidebar.
-func (gw *guiWin) isCollapsed() bool {
+// sidebar reports whether the strip is a sidebar (left or right) rather
+// than a bar.
+func (gw *guiWin) sidebar() bool {
 	pos := gw.cfg.Tabs.Position
-	return gw.collapsed && (pos == "left" || pos == "right")
+	return pos == "left" || pos == "right"
+}
+
+// isCollapsed reports whether the sidebar shows one character per tab;
+// collapsing only applies to a sidebar.
+func (gw *guiWin) isCollapsed() bool {
+	return gw.collapsed && gw.sidebar()
 }
 
 // setCollapsed narrows or widens the sidebar for this window.
