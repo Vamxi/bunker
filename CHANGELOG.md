@@ -3,6 +3,22 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
+## 0.6.2
+
+### Fixed
+
+- After an ssh session drops (or a program crashes) with mouse reporting
+  on, moving the mouse no longer types sequences like `35;13;44M` at the
+  shell prompt. Mouse and focus reports belong to the program that turned
+  them on; once it has left the foreground, bunker turns them off.
+- Scrolling with the wheel while selecting text scrolls and extends the
+  selection; before, the wheel did nothing and the next move started the
+  selection over. Programs that use the mouse also get wheel turns made
+  with a button held.
+- Dragging a selection past the top or bottom of a pane scrolls faster the
+  further past the edge the pointer goes, from 20 lines a second at the
+  edge; before, it crawled at about 12 lines a second.
+
 ## 0.6.1
 
 ### Added

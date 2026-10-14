@@ -62,12 +62,17 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	btn := ev.Buttons()
 	shiftHeld := ev.Modifiers()&tcell.ModShift != 0
 
+	// A wheel notch arrives with any held button's bit too (Button1|WheelUp
+	// while drag-selecting). It is the wheel alone: the held button is still
+	// the one in prevBtn.
+	if wheel := btn & wheelButtons; wheel != 0 {
+		btn = wheel
+	}
 	prevBtn := app.prevMouseBtn
 	// Don't update prevBtn for wheel events — they don't represent a button
 	// state change and would corrupt drag-select detection (making the next
 	// Button1 motion look like a fresh press, clearing the selection).
-	if btn != tcell.WheelUp && btn != tcell.WheelDown &&
-		btn != tcell.WheelLeft && btn != tcell.WheelRight {
+	if btn&wheelButtons == 0 {
 		app.prevMouseBtn = btn
 	}
 
@@ -90,9 +95,7 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	// ── Click-to-focus ────────────────────────────────────────────────────
 	var prevActive *Pane
 	// Don't switch focus while a drag-select is in progress.
-	if target != nil && btn != tcell.ButtonNone &&
-		btn != tcell.WheelUp && btn != tcell.WheelDown &&
-		btn != tcell.WheelLeft && btn != tcell.WheelRight &&
+	if target != nil && btn != tcell.ButtonNone && btn&wheelButtons == 0 &&
 		target != app.active && !target.isDead() &&
 		app.dragPane == nil {
 		prevActive = app.active
@@ -285,11 +288,13 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 				sel = target
 			}
 			// Auto-scroll when the cursor is at the top or bottom edge of the
-			// pane.  The goroutine keeps scrolling at a fixed rate while the
-			// cursor stays at the edge (mouse motion events stop when stationary).
+			// pane.  The goroutine keeps scrolling while the cursor stays at
+			// the edge (mouse motion events stop when stationary), faster the
+			// further past the edge it is.
 			atTop := y <= sel.y
 			atBot := y >= sel.y+sel.h-1
 			if atTop || atBot {
+				app.dragEdgeLines.Store(int32(app.dragEdgeSpeed(sel, y, atTop)))
 				app.startDragEdgeScroll(sel, atTop)
 			} else {
 				app.stopDragEdgeScroll()
@@ -388,15 +393,13 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	useSGR := mode&vt10x.ModeMouseSgr != 0
 
 	if data := mouseToBytes(btn, prevBtn, ev.Modifiers(), px, py, useSGR); len(data) > 0 {
-		// Re-check mouse mode under the lock immediately before writing.
+		// Re-check mouse mode immediately before writing.
 		// Between the initial mode read and here, readPTY may have processed
-		// an alt-screen exit chunk that disables mouse reporting.  Without
-		// this second check the shell receives raw SGR mouse sequences as
-		// visible garbage text (e.g. "51;80;29M51;77;28M…").
-		target.mu.Lock()
-		stillWants := target.term.Mode()&vt10x.ModeMouseMask != 0
-		target.mu.Unlock()
-		if stillWants {
+		// an alt-screen exit chunk that disables mouse reporting, or the
+		// program that asked for reports may be gone (a dropped ssh
+		// session).  Without this second check the shell receives raw SGR
+		// mouse sequences as visible garbage text (e.g. "51;80;29M51;77;28M…").
+		if target.wantsReports(vt10x.ModeMouseMask) {
 			target.writeInput(data)
 		}
 	}
@@ -549,10 +552,7 @@ func sendFocusIn(p *Pane) {
 	if p == nil {
 		return
 	}
-	p.mu.Lock()
-	wants := p.term.Mode()&vt10x.ModeFocus != 0
-	p.mu.Unlock()
-	if wants {
+	if p.wantsReports(vt10x.ModeFocus) {
 		L.Debug("sendFocusIn", "pane", p.id)
 		p.writeInput([]byte("\x1b[I"))
 	}
@@ -563,10 +563,7 @@ func sendFocusOut(p *Pane) {
 	if p == nil {
 		return
 	}
-	p.mu.Lock()
-	wants := p.term.Mode()&vt10x.ModeFocus != 0
-	p.mu.Unlock()
-	if wants {
+	if p.wantsReports(vt10x.ModeFocus) {
 		L.Debug("sendFocusOut", "pane", p.id)
 		p.writeInput([]byte("\x1b[O"))
 	}
@@ -640,30 +637,49 @@ func isWordChar(r rune) bool {
 	return false
 }
 
-// startDragEdgeScroll starts (or restarts) a goroutine that scrolls sel in the
-// given direction while the cursor stays at the pane edge during a drag-select.
-// scrollUp=true scrolls toward the past; false scrolls toward the present.
-// If a goroutine is already running in the same direction nothing changes;
-// if the direction changed the old goroutine is stopped first.
+// wheelButtons are the wheel "buttons" in a tcell mouse event.
+const wheelButtons = tcell.WheelUp | tcell.WheelDown | tcell.WheelLeft | tcell.WheelRight
+
+const (
+	dragEdgeTick     = 50 * time.Millisecond // edge auto-scroll interval
+	dragEdgeMaxLines = 30                    // lines per tick at full speed
+)
+
+// dragEdgeSpeed is how many lines a tick of the edge auto-scroll moves while
+// a drag-select is at sel's top (up) or bottom edge: one at the edge, and
+// one more for every row the pointer is past it, in a neighbouring pane or
+// outside the window (dragOvershoot, which the window sets).
+func (app *App) dragEdgeSpeed(sel *Pane, y int, up bool) int {
+	beyond, outside := y-(sel.y+sel.h-1), int(app.dragOvershoot.Load())
+	if up {
+		beyond, outside = sel.y-y, -outside
+	}
+	return min(1+max(beyond, 0)+max(outside, 0), dragEdgeMaxLines)
+}
+
+// startDragEdgeScroll starts a goroutine that scrolls sel while the cursor
+// stays at the pane edge during a drag-select, toward the past if scrollUp,
+// by dragEdgeLines a tick. A running goroutine takes the new direction.
 func (app *App) startDragEdgeScroll(sel *Pane, scrollUp bool) {
-	// If already scrolling in the same direction, leave it running.
+	app.dragEdgeUp.Store(scrollUp)
 	if app.dragEdgeStop != nil {
 		return
 	}
 	stop := make(chan struct{})
 	app.dragEdgeStop = stop
 	go func() {
-		ticker := time.NewTicker(80 * time.Millisecond)
+		ticker := time.NewTicker(dragEdgeTick)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-stop:
 				return
 			case <-ticker.C:
-				if scrollUp {
-					sel.scrollUp(1)
+				up, lines := app.dragEdgeUp.Load(), max(int(app.dragEdgeLines.Load()), 1)
+				if up {
+					sel.scrollUp(lines)
 				} else {
-					sel.scrollDown(1)
+					sel.scrollDown(lines)
 				}
 				// Extend selCursor to the visible edge after scrolling.
 				sel.mu.Lock()
@@ -671,7 +687,7 @@ func (app *App) startDragEdgeScroll(sel *Pane, scrollUp bool) {
 					cols, rows := sel.term.Size()
 					sbCount := sel.sb.count
 					sbOff := sel.sbOff
-					if scrollUp {
+					if up {
 						// Extend to the new top-left of the view.
 						vRow := sbCount - sbOff
 						sel.selCursor = selPos{row: vRow, col: 0}

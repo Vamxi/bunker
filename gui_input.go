@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"math"
 	"strings"
 
 	"bunker/internal/vt10x"
@@ -415,11 +416,26 @@ func (v *termView) mouseButton(button uint, pressed bool, x, y float64, state gd
 func (v *termView) mouseMotion(x, y float64, state gdk.ModifierType) {
 	defer guiRecover("mouseMotion")
 	col, row := v.cellAt(x, y)
-	if [2]int{col, row} == v.mouseCell {
+	over := int32(v.rowsOutside(y))
+	if [2]int{col, row} == v.mouseCell && over == v.app.dragOvershoot.Load() {
 		return
 	}
+	v.app.dragOvershoot.Store(over)
 	v.updateHoverLink(x, y)
 	v.sendMouse(x, y, v.mouseBtn, state)
+}
+
+// rowsOutside is how many rows y is above (negative) or below (positive)
+// the grid; a drag-select scrolls faster the further out it goes.
+func (v *termView) rowsOutside(y float64) int {
+	r := (y - v.pad) / v.cellH
+	switch {
+	case r < 0:
+		return -int(math.Ceil(-r))
+	case r >= float64(v.rows):
+		return int(r) - v.rows + 1
+	}
+	return 0
 }
 
 // mouseScroll turns wheel/touchpad deltas into whole-line wheel events.

@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -86,6 +87,13 @@ type App struct {
 	// away from the edge or the button is released.  Nil when no goroutine
 	// is running.  Access only from the event-loop goroutine.
 	dragEdgeStop chan struct{}
+	// The edge auto-scroll reads these each tick: lines to move (more the
+	// further past the edge the pointer is) and the direction. The window
+	// sets dragOvershoot to the rows the pointer is above (negative) or below
+	// the view during a drag, which the clamped event position cannot show.
+	dragEdgeLines atomic.Int32
+	dragEdgeUp    atomic.Bool
+	dragOvershoot atomic.Int32
 
 	// sbDragPane is non-nil while the user is dragging the scrollbar.
 	// sbDragLastY is the Y cell from the previous drag event (for relative deltas).

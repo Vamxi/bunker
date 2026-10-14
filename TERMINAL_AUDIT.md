@@ -68,8 +68,8 @@ be queried accurately for that value. Explicit pane colour overrides remain quer
 | 12 | Cursor blink | OK | Toggles blinking while retaining block/underline/bar shape; queryable with DECRQM |
 | 25 | DECTCEM (cursor visible) | OK | |
 | 47/1047 | Alt screen | OK | |
-| 1000-1003 | Mouse modes | OK | Release events are forwarded in 1000/1002 as well as 1003 |
-| 1004 | Focus events | OK | Pane navigation and outer-terminal focus changes are forwarded when enabled |
+| 1000-1003 | Mouse modes | OK | Release events are forwarded in 1000/1002 as well as 1003; turned off once the process group that turned them on leaves the foreground |
+| 1004 | Focus events | OK | Pane navigation and outer-terminal focus changes are forwarded when enabled; dropped with the mouse modes when their owner leaves the foreground |
 | 1006 | SGR mouse | OK | |
 | 1049 | Alt screen + save cursor | OK | |
 | 2004 | Bracketed paste | OK | |

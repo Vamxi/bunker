@@ -25,6 +25,8 @@ import (
 	"sync"
 	"time"
 
+	"bunker/internal/vt10x"
+
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -673,6 +675,7 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 		if len(p.kittyStack) > 0 && p.kittyOwnerPGID != pgid {
 			p.clearStaleKittyMode(termFgPGID(shellPid))
 		}
+		p.dropStaleReports(pgid)
 		p.mu.Unlock()
 
 		// Only re-run the expensive detection (/proc/environ, cgroup, podman
@@ -727,6 +730,57 @@ func (p *Pane) clearStaleKittyMode(pgid int) {
 	if pgid > 0 && p.kittyOwnerPGID > 0 && pgid != p.kittyOwnerPGID {
 		p.kittyStack = p.kittyStack[:0]
 		p.kittyOwnerPGID = 0
+	}
+}
+
+// reportModes make the pane send the program mouse and focus events.
+const reportModes = vt10x.ModeMouseMask | vt10x.ModeFocus
+
+// foregroundPGID is the process group in the foreground of the pane's
+// terminal, or 0 if it is unknown.
+func (p *Pane) foregroundPGID() int {
+	if p.cmd == nil || p.cmd.Process == nil {
+		return 0
+	}
+	return termFgPGID(p.cmd.Process.Pid)
+}
+
+// noteReportOwner records which foreground process group turned on mouse
+// or focus reports. Requires p.mu.
+func (p *Pane) noteReportOwner() {
+	switch {
+	case p.term.Mode()&reportModes == 0:
+		p.mouseOwnerPGID = 0
+	case p.mouseOwnerPGID == 0:
+		p.mouseOwnerPGID = p.foregroundPGID()
+	}
+}
+
+// wantsReports reports whether p's program asked for any of modes (mouse or
+// focus reports), first dropping them if the program that asked is gone.
+func (p *Pane) wantsReports(modes vt10x.ModeFlag) bool {
+	p.mu.Lock()
+	on := p.term.Mode()&modes != 0
+	p.mu.Unlock()
+	if !on {
+		return false
+	}
+	fg := p.foregroundPGID()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.dropStaleReports(fg)
+	return p.term.Mode()&modes != 0
+}
+
+// dropStaleReports turns mouse and focus reports off once the process group
+// that turned them on has left the foreground (fg). A dropped ssh session or
+// a crashed program never turns them off, and the shell would get every
+// mouse move as typed text ("35;13;44M35;12;40M…"). Requires p.mu.
+func (p *Pane) dropStaleReports(fg int) {
+	if p.mouseOwnerPGID > 0 && fg > 0 && fg != p.mouseOwnerPGID {
+		L.Debug("pane: dropping stale mouse reports", "pane", p.id, "owner", p.mouseOwnerPGID, "foreground", fg)
+		p.feed([]byte("\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l"))
+		p.mouseOwnerPGID = 0
 	}
 }
 

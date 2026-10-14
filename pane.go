@@ -183,6 +183,11 @@ type Pane struct {
 	kittyStack     []int
 	kittyOwnerPGID int
 
+	// mouseOwnerPGID is the foreground process group that turned on mouse or
+	// focus reports (status.go dropStaleReports), 0 while they are off.
+	// Protected by mu.
+	mouseOwnerPGID int
+
 	passthrough bool // protected by mu
 
 	// Temporary status message (e.g. "COPIED") shown in the status bar.
@@ -763,7 +768,7 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 		// background colour from the TUI app is cleared from the terminal.
 		p.needsSync = true
 	}
-
+	p.noteReportOwner()
 }
 
 type terminalQueryKind int

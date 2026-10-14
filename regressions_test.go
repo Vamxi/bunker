@@ -12,6 +12,7 @@ import (
 
 	"bunker/internal/vt10x"
 
+	"github.com/creack/pty"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -222,6 +223,179 @@ func TestRegressionMouseReleaseForwarding(t *testing.T) {
 				t.Fatalf("mouse release not forwarded; child received %q", got)
 			}
 		})
+	}
+}
+
+// childInput gives p a file in place of its PTY and returns what the pane
+// has sent the program so far, emptying it.
+func childInput(t *testing.T, p *Pane) func() string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	p.ptmx = f
+	return func() string {
+		got, err := os.ReadFile(f.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Truncate(0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Seek(0, 0); err != nil {
+			t.Fatal(err)
+		}
+		return string(got)
+	}
+}
+
+// A program that turns on mouse reports and then goes away without turning
+// them off (an ssh session whose connection drops, a crash) would leave the
+// shell getting every mouse move as typed text ("35;13;44M35;12;40M…"). The
+// reports belong to the process group that turned them on: once another
+// group is in front, the pane turns them off instead of sending them.
+func TestRegressionStaleMouseReportsDropped(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	tty, err := pty.Start(cmd)
+	if err != nil {
+		t.Skip("no PTY:", err)
+	}
+	t.Cleanup(func() {
+		if err := cmd.Process.Kill(); err != nil {
+			t.Error(err)
+		}
+		if err := cmd.Wait(); err == nil {
+			t.Error("sleep was not killed")
+		}
+		if err := tty.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	p := regressionPane(10, 3)
+	p.cmd = cmd
+	sent := childInput(t, p)
+	p.captureAndWrite([]byte("\x1b[?1003h\x1b[?1006h\x1b[?1004h"))
+	p.mu.Lock()
+	owner := p.mouseOwnerPGID
+	p.mu.Unlock()
+	if owner != cmd.Process.Pid {
+		t.Fatalf("reports owned by %d, want the foreground group %d", owner, cmd.Process.Pid)
+	}
+
+	app := &App{root: newLeaf(p, 0, 0, 11, 3), active: p}
+	app.handleMouse(tcell.NewEventMouse(2, 1, tcell.ButtonNone, tcell.ModNone))
+	if got := sent(); got != "\x1b[<35;3;2M" {
+		t.Fatalf("the owner should get mouse moves; got %q", got)
+	}
+
+	// Another group is now in front, as the shell is once ssh has exited.
+	p.mu.Lock()
+	p.mouseOwnerPGID = cmd.Process.Pid + 1
+	p.mu.Unlock()
+	app.handleMouse(tcell.NewEventMouse(3, 1, tcell.ButtonNone, tcell.ModNone))
+	sendFocusIn(p)
+	if got := sent(); got != "" {
+		t.Errorf("reports sent after their owner left: %q", got)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.term.Mode()&reportModes != 0 || p.mouseOwnerPGID != 0 {
+		t.Errorf("reports still on (modes %b, owner %d)", p.term.Mode()&reportModes, p.mouseOwnerPGID)
+	}
+}
+
+// Turning the reports off forgets their owner, so the next program to turn
+// them on owns them.
+func TestMouseReportOwnerClearedWhenOff(t *testing.T) {
+	p := regressionPane(10, 3)
+	p.captureAndWrite([]byte("\x1b[?1000h"))
+	p.mu.Lock()
+	p.mouseOwnerPGID = 42
+	p.mu.Unlock()
+	p.captureAndWrite([]byte("\x1b[?1000l"))
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.mouseOwnerPGID != 0 {
+		t.Errorf("owner %d kept after the reports went off", p.mouseOwnerPGID)
+	}
+}
+
+// A wheel notch while drag-selecting arrives as Button1|WheelUp. It scrolls
+// and extends the selection, and the drag carries on: the next move must not
+// look like a fresh press that starts the selection over.
+func TestRegressionWheelWhileDragSelecting(t *testing.T) {
+	p := regressionPane(10, 5)
+	for i := range 20 {
+		p.captureAndWrite([]byte(fmt.Sprintf("line %d\r\n", i)))
+	}
+	app := &App{root: newLeaf(p, 0, 0, 11, 5), active: p}
+	app.handleMouse(tcell.NewEventMouse(2, 2, tcell.Button1, tcell.ModNone))
+	app.handleMouse(tcell.NewEventMouse(4, 2, tcell.Button1, tcell.ModNone))
+	p.mu.Lock()
+	anchor := p.selAnchor
+	p.mu.Unlock()
+
+	app.handleMouse(tcell.NewEventMouse(4, 2, tcell.Button1|tcell.WheelUp, tcell.ModNone))
+	p.mu.Lock()
+	if p.sbOff != 3 || !p.selActive || p.selCursor.row != anchor.row-3 {
+		t.Errorf("wheel while selecting: scrolled %d (want 3), selecting %v, cursor row %d (want %d)", p.sbOff, p.selActive, p.selCursor.row, anchor.row-3)
+	}
+	p.mu.Unlock()
+
+	app.handleMouse(tcell.NewEventMouse(5, 2, tcell.Button1, tcell.ModNone))
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.selActive || p.selAnchor != anchor {
+		t.Errorf("the drag after the wheel restarted the selection: anchor %v -> %v, selecting %v", anchor, p.selAnchor, p.selActive)
+	}
+}
+
+// A program that asked for the mouse gets wheel notches made with a button
+// held, as wheel events.
+func TestRegressionWheelWithButtonHeldForwarded(t *testing.T) {
+	p := regressionPane(10, 3)
+	sent := childInput(t, p)
+	p.captureAndWrite([]byte("\x1b[?1002h\x1b[?1006h"))
+	app := &App{root: newLeaf(p, 0, 0, 11, 3), active: p}
+	app.handleMouse(tcell.NewEventMouse(1, 1, tcell.Button1, tcell.ModNone))
+	app.handleMouse(tcell.NewEventMouse(1, 1, tcell.Button1|tcell.WheelUp, tcell.ModNone))
+	if got := sent(); !strings.HasSuffix(got, "\x1b[<64;2;2M") {
+		t.Errorf("wheel with Button1 held not forwarded; program got %q", got)
+	}
+}
+
+// A drag-select at a pane's edge scrolls a line a tick, one more for every
+// row the pointer is past the edge (into a neighbour, or outside the window
+// as the window reports it), up to a cap.
+func TestDragEdgeSpeed(t *testing.T) {
+	sel := &Pane{y: 5, h: 10} // rows 5 to 14
+	for _, tc := range []struct {
+		name    string
+		y       int
+		up      bool
+		outside int32
+		want    int
+	}{
+		{"at the top edge", 5, true, 0, 1},
+		{"two rows into the pane above", 3, true, 0, 3},
+		{"at the bottom edge", 14, false, 0, 1},
+		{"two rows into the pane below", 16, false, 0, 3},
+		{"four rows above the window", 5, true, -4, 5},
+		{"below the window while at the top", 5, true, 4, 1},
+		{"four rows below the window", 14, false, 4, 5},
+		{"far out", 14, false, 500, dragEdgeMaxLines},
+	} {
+		app := &App{}
+		app.dragOvershoot.Store(tc.outside)
+		if got := app.dragEdgeSpeed(sel, tc.y, tc.up); got != tc.want {
+			t.Errorf("%s: %d lines a tick, want %d", tc.name, got, tc.want)
+		}
 	}
 }
 
