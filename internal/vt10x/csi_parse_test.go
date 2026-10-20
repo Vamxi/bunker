@@ -51,6 +51,9 @@ func (c *csiEscape) parseReference() {
 				}
 				c.args = append(c.args, v)
 			}
+		} else if p == "" {
+			// An empty parameter is 0 (ECMA-48).
+			c.args = append(c.args, 0)
 		} else {
 			i, err := strconv.Atoi(p)
 			if err != nil {
@@ -95,4 +98,28 @@ func TestCSIParseDoesNotAllocate(t *testing.T) {
 	if n := testing.AllocsPerRun(100, func() { c.args = c.args[:0]; c.parse() }); n != 0 {
 		t.Fatalf("CSI parse allocates %v times", n)
 	}
+}
+
+// fzf draws its selected line with "\x1b[;1;38;5;161;48;5;236m": parsing used
+// to stop at the leading empty parameter, so the highlight was dropped and the
+// selected line looked like every other one.
+func TestCSIEmptyParameterIsZero(t *testing.T) {
+	t.Run("SGR colours after an empty first parameter", func(t *testing.T) {
+		term := New(WithSize(10, 2))
+		if _, err := term.Write([]byte("\x1b[;1;38;5;161;48;5;236mX")); err != nil {
+			t.Fatal(err)
+		}
+		if g := term.Cell(0, 0); g.FG != Color(161) || g.BG != Color(236) || g.Mode&attrBold == 0 {
+			t.Fatalf("glyph = %+v, want bold, fg 161, bg 236", g)
+		}
+	})
+	t.Run("CUP with an empty row moves to row 1", func(t *testing.T) {
+		term := New(WithSize(10, 3))
+		if _, err := term.Write([]byte("\x1b[2;2H\x1b[;5HY")); err != nil {
+			t.Fatal(err)
+		}
+		if term.Cell(4, 0).Char != 'Y' {
+			t.Fatalf("cursor = %+v, want column 5 of row 1", term.Cursor())
+		}
+	})
 }

@@ -43,9 +43,10 @@ func (c *csiEscape) parse() {
 	}
 	s = s[:len(s)-1]
 	// Parsed in place over the bytes: this runs for every SGR, and building
-	// strings to split cost several allocations per colour change. Parsing
-	// stops at the first parameter strconv.Atoi would reject, as it always
-	// has (see TestCSIParseMatchesReference).
+	// strings to split cost several allocations per colour change. An empty
+	// parameter is 0, as ECMA-48 says (fzf writes "\x1b[;38;5;236m"); parsing
+	// stops at the first other parameter strconv.Atoi would reject (see
+	// TestCSIParseMatchesReference).
 	for {
 		p := s
 		if k := bytes.IndexByte(s, ';'); k >= 0 {
@@ -91,6 +92,8 @@ func (c *csiEscape) parse() {
 				}
 				c.args = append(c.args, v)
 			}
+		} else if len(p) == 0 {
+			c.args = append(c.args, 0)
 		} else {
 			i, ok := atoi(p)
 			if !ok {

@@ -3,6 +3,15 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
+## 0.6.3
+
+### Fixed
+
+- fzf pickers, such as `zi` and the Ctrl-R history search, highlight the
+  selected line. Escape sequences with an empty parameter, like
+  `\e[;38;5;236m`, were read as a reset and lost their colours; an empty
+  parameter now counts as 0.
+
 ## 0.6.2
 
 ### Fixed
