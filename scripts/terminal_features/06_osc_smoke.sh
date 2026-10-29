@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # osc_smoke.sh -- automated OSC/query smoke tests with PASS/FAIL assertions.
 #
-# Run inside a bunk pane attached to a real terminal:
+# Run directly in the terminal under test:
 #   bash scripts/osc_smoke.sh
 #
 # What it checks:
 #   - same-chunk alt-screen + OSC 10/11/12 set/query ordering
-#   - OSC 110/111/112 reset semantics against the pane's baseline colours
+#   - OSC 110/111/112 reset semantics against the theme's colours
 #   - normal-mode OSC 10/11/12 responses
 #   - same-chunk DECRQM state updates
 
@@ -70,7 +70,7 @@ query_raw() {
 main() {
     require_query_tty
 
-    printf 'bunk OSC smoke test\n\n'
+    printf 'OSC smoke test\n\n'
 
     local baseline10 baseline11 baseline12
     baseline10=$(query_raw "${CSI}?1049h${OSC}10;?${ST}${CSI}?1049l")

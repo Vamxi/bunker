@@ -1,297 +1,203 @@
 # AGENTS.md
 
-> See [AGENTS.universal.md](./AGENTS.universal.md) and [AGENTS.go.md](./AGENTS.go.md) for universal conventions.
+> See [AGENTS.universal.md](./AGENTS.universal.md) for universal conventions.
 > Refresh: `make standards`
 
 ---
 
 ## Overview
 
-bunker is a Linux-only GTK4 terminal written in Go, built on
-[jsnjack/bunk](https://github.com/jsnjack/bunk). Every tab runs bunk's
-multiplexer (PTY-backed panes, the vendored vt10x emulator, BSP splits,
-scrollback, search, badges) and draws it with GtkSnapshot, so GTK renders it
-on the GPU. `bunker tui` still runs the multiplexer inside another terminal.
-It is used daily with Claude Code, Copilot CLI, btop, vim, and other TUI apps.
+bunker is a Linux-only GTK 4 terminal written in Rust. Tabs sit in a
+sidebar (or a bar) that shows what each one is doing: a circle with its
+colour tag and state (a coding agent working or waiting, a command running
+or finished, a bell), the directory, git branch, SSH host, and progress.
+Text is shaped with Pango and drawn as GSK nodes, so GTK renders it on the
+GPU. It is used daily with Claude Code, Copilot CLI, btop, vim, and other
+TUI apps.
+
+Until 0.7 bunker was written in Go on top of
+[bunk](https://github.com/jsnjack/bunk); that code is in the git history.
+Splits, zoom, and pane navigation have not been rebuilt yet.
 
 ---
 
 ## Architecture
 
 ```
-main.go             Entry point — calls Execute()
-cmd.go              cobra root (GUI) and "tui" commands; run() for the TUI
-cmd_config.go       "bunker config" init/list/get/set, with a validator per setting
-gui.go              GTK application and window, actions, config watch/reload/apply
-gui_tabs.go         Tabs: one App + termView per tab in a GtkStack; tab strip, menu, colour tags
-gui_strip.go        Tab strip layout: rows, gaps, dragging a tab with the others sliding
-gui_view.go         termView widget: fonts, sizing, frame capture, release on close
-gui_panes.go        Split-tree drawing: per-pane frames, separators, badges, search bar
-gui_glyphs.go       Procedural box drawing, blocks, braille
-gui_input.go        GDK keys → tcell events → keyToBytesMode; mouse; clipboard
-gui_ime.go          Input methods (dead keys, Compose, CJK, emoji picker)
-gui_links.go        Hyperlinks: OSC 8 and plain URLs, wrapped across rows
-gui_settings.go     Preferences window (writes keys through tomledit.go)
-gui_settings_keys.go Preferences > Keyboard: shortcut recorder, clash bar
-gui_shortcuts.go    Window shortcuts in GTK terms: matching, labels, accelerators
-gui_cursor.go       Cursor blinking ([cursor] blink)
-gui_alerts.go       Tab attention (dot / coloured letter) and desktop notifications
-gui_style.go        Static CSS and theme-derived window chrome
-gui_debug.go        BUNKER_SCREENSHOT / BUNKER_KEYS / BUNKER_CPUPROFILE hooks
-desktop.go          Embedded icon, `install-desktop`, `themes` commands
-themes.go           Bundled Ptyxis palettes (themes/ptyxis)
-tomledit.go         Comment-preserving single-key TOML edits, atomic config writes
-shortcuts.go        Window shortcut table, key syntax, clash detection
-app.go              App (one tab's pane model), event loop, key handling
-input_modes.go      Application cursor/keypad encoding and focus forwarding
-pane.go             Pane: PTY spawn, readPTY, captureAndWrite, query replies
-pane_alert.go       Bells, notifications, finished commands → alerts for the frontend
-ptystream.go        Bounded UTF-8/control framing before PTY parsing
-osc.go              OSC pre-scanner, passthrough of OSC 7/52/133
-graphics.go         Image colour blending, virtual pixels, raw-history trimming
-scrollback.go       sbRing ring buffer of scrolled-off rows
-reflow.go           Reflow helpers, scroll anchoring, stripAltScreen()
-layout.go           BSP tree: Node, split/remove/resize math
-render.go           TUI rendering through tcell
-mouse.go            Mouse events → PTY byte sequences
-status.go           Status badges (scroll, container, SSH, flash messages)
-search.go           In-pane text search
-config.go           TOML config, theme registry, keybinding resolution
-hostcolors.go       Host terminal colour probing (TUI)
-clipboard.go        OSC 52 clipboard passthrough
-cellaspect.go       Cell pixel aspect ratio detection
-logger.go           slog setup for --debug / --trace
-
-internal/vt10x/     VT100/ANSI emulator (fork of github.com/hinshun/vt10x)
-  state.go          State, Cursor, Glyph, rows with used counts, setAttr, setMode
-  parse.go          Parser state machine and the ASCII fast path
-  csi.go            CSI dispatcher
-  str.go            OSC, DCS, APC strings
-  grapheme.go       Incremental grapheme assembly
-  alert.go          BEL, OSC 9/777/99 notifications, OSC 133 command boundaries
-  uniinfo.go        Per-rune width and grapheme table filled from uniseg
-  graphics.go       Image-to-cell painting, Kitty placement deletion
-  status.go         DECRQSS setting serialization
-  vt.go             Terminal / View interfaces, options, New()
-  vt_posix.go       terminal type, Write (POSIX)
-  color.go          Color type and named colours
-internal/graphics/  Bounded SIXEL, Kitty, and iTerm2 static image decoders
-internal/benchdata/ Benchmark workloads (seq, prose, colors, unicode, tui)
-
-third_party/tcell/  tcell v2.13.10 with bunk's patches (BUNK_PATCHES.md)
-third_party/gotk4/  gotk4 v0.4.1 with subclass fixes (BUNKER_PATCHES.md)
-themes/ptyxis/      The 20 bundled palettes
-assets/icon/        App icon in every hicolor size
-scripts/            headless-gui.sh (private compositor for GUI tests)
+Cargo.toml              workspace: crates/vt, crates/bunker
+crates/vt/              bunker-vt: the emulator core, no I/O, no GTK
+  parser.rs             byte state machine; SWAR scan for printable runs, a
+                        fast path for whole control sequences
+  term.rs               Terminal: cursor, modes, scrolling, editing, events,
+                        image placement
+  csi.rs                CSI dispatch, SGR, mode reports, kitty keyboard stack
+  osc.rs                OSC (title, cwd, links, colours, 52, 133, notify), DCS
+  graphics.rs           SIXEL, kitty graphics, iTerm2 images: decoding, cache,
+                        placement sizes, limits
+  grid.rs               Row (cells, grapheme tails, images, id), Grid, Scrollback
+  cell.rs               8-byte Cell, Style, StyleTable (interned, compacted)
+  reflow.rs             resize: rewraps history from cells, no replay
+  search.rs             find in history and screen, across soft wraps
+  select.rs             text of ranges, word and line bounds
+  input.rs              key, mouse, paste, and focus encoding
+  colors.rs             Rgb, Theme, Palette with OSC overrides
+  unicode.rs            widths and grapheme joining (tables from build.rs)
+  tests.rs              behaviour tests: bytes in, screen and replies out
+  build.rs              width/join tables generated from unicode-segmentation
+  examples/             workloads.rs (benchmark data), throughput.rs (MB/s)
+crates/bunker/          the GTK 4 app (gtk4-rs)
+  main.rs               flags, logging, config, then a command or a window
+  cli.rs                bunker config / themes / install-desktop; icons
+  session.rs            PTY reader/writer/watcher threads around a Terminal
+  pty.rs                openpt, spawn with setsid + TIOCSCTTY, resize, tcgetpgrp
+  procinfo.rs           cwd, command, git branch, ssh host, coding agent
+  config.rs             the config file: parse, and single-key saves that keep
+                        comments (toml_edit), written atomically at mode 0600
+  theme.rs              bundled Ptyxis palettes (themes/ptyxis)
+  log.rs                --debug / --trace logging
+  ui/mod.rs             application, config file watch and live apply
+  ui/window.rs          window, tab list with live tab info, rename, sidebar
+                        resize, alerts and desktop notifications
+  ui/strip.rs           tab list layout: dragging a tab, the others sliding
+  ui/indicator.rs       tab circle: colour ring, state inside, joining lines
+  ui/view.rs            TermView widget: drawing, keys, IME, mouse, selection,
+                        search highlights, images, passthrough
+  ui/render.rs          row drawing: Pango shaping snapped to cells, GSK nodes
+  ui/glyphs.rs          box drawing, blocks, braille drawn as shapes
+  ui/search.rs          the Ctrl+F bar
+  ui/keys.rs            GDK keys → vt keys; configurable shortcuts ([keys])
+  ui/prefs.rs           Preferences window; each control saves one key
+  ui/themes.rs          theme picker: drawn previews, nine per page
+  ui/images.rs          PNG/JPEG/GIF and zlib through gdk-pixbuf and GIO
+  ui/style.rs           theme-derived CSS
+  ui/debug.rs           BUNKER_INPUT / BUNKER_SCREENSHOT hooks
+themes/ptyxis/          the bundled palettes
+assets/icon/            app icon in every hicolor size (built into the binary)
+scripts/                headless-gui.sh, termbench.sh, terminal_features/
 ```
-
-Local extensions to vt10x:
-- SGR 2/8/9/21/53/58 and 4:N underline styles; DECSCUSR cursor shapes.
-- DECSET 2004 bracketed paste, 2026 synchronized updates, 12 cursor blink,
-  2027 grapheme widths (on by default).
-- `QueryPrivateMode(n)` answers DECRQM for every tracked private mode; unknown
-  modes return status 0, not 4. DECRQSS reports SGR, scroll margins, and
-  cursor style, and a negative response for anything else.
-- `\x1b[?4m` no longer misfires as SGR 4.
-- Coordinates are display cells: wide characters have a lead cell and a
-  continuation. `Glyph.Combining` holds the rest of a grapheme, up to 1 KiB.
-- `ReplaceScreen` keeps modes, attributes, callbacks, and hyperlinks through
-  reflow.
-- Rows record how many leading cells are used; the rest are blank, so
-  clearing and scrolling cost a line's length, not the width.
-- Character widths and grapheme starts come from `uniInfo`, a table filled
-  from uniseg on first use.
 
 ---
 
 ## Key Flows
 
-1. **Startup** — `main()` → `Execute()` → `runGUI()` loads the config, sets
-   up slog, and runs a `GtkApplication`; activation builds the window and the
-   first tab (`newTab`: an `App`, a `termView`, and the first `Pane`).
-   `bunker tui` goes to `run()` instead, which drives the same `App` through a
-   tcell screen.
-2. **Pane output** — `readPTY` reads up to 32 KiB, frames it (`ptyStream`),
-   passes OSC 7/52/133 on (`osc.go`), then `captureAndWrite` splits out
-   terminal queries, answers them in stream order, and feeds the rest to
-   vt10x. Rows leaving the top go straight into the scrollback ring
-   (`onScrollSwap`). The view is asked to redraw through `glib.IdleAdd`.
-3. **Drawing** — on each frame `termView.snapshot` copies every visible pane
-   under its lock (`paneFrame.capture`), then draws rows, cursor, selection,
-   links, search matches, badges, and separators.
-4. **Input** — GDK key presses become tcell events and go through
-   `App.handleKey`, the same path as the TUI; the input method handles text
-   entry first. Mouse events go through `App.handleMouse`.
-5. **Resize and reflow** — the view computes the grid from its allocation;
-   `Pane.resizeAndReflow()` replays the raw output (`rawBuf`) into a scratch
-   terminal at the new width and installs the result with `ReplaceScreen`.
-6. **Config** — the config file is the source of truth. Preferences writes one
-   key (`guiWin.setKey`), the directory monitor notices, `reload` parses the
-   file, and `apply` updates every window.
-
-**Lock ordering:** always `app.mu` before `Pane.mu`. Never acquire `app.mu`
-while holding `Pane.mu`.
+1. **Startup** — `main()` parses flags; a subcommand runs in `cli.rs`,
+   otherwise `ui::run` starts a `GtkApplication`. Activation opens a
+   window with one tab: a `Session` (PTY and threads) and a `TermView`.
+2. **Output** — the reader thread reads up to 64 KiB, locks the
+   `Terminal`, parses, takes its replies (sent through the writer thread),
+   and wakes the UI with `MainContext::invoke`, at most once per frame.
+3. **Drawing** — `View::draw` copies the rows that changed under the lock,
+   then shapes them after releasing it. Row drawings are cached by row
+   identity, so scrolled rows are reused. Images are textures cached by
+   image id.
+4. **Input** — keys go through window shortcuts, then the input method,
+   then `bunker_vt::encode_key` with the terminal's modes.
+5. **Resize** — the view computes the grid from its allocation; the
+   terminal rewraps history and keeps the cursor's line as it was (see
+   Design Decisions), then the PTY gets the new size.
+6. **Config** — the config file is the source of truth. Preferences and the
+   sidebar drag save one key; Preferences also applies the change at once,
+   and the file watch in `ui/mod.rs` applies edits from anywhere.
 
 ---
 
 ## Build & Run
 
 ```bash
-make check      # fmt → vet → test → build → lint
-make test       # race-enabled tests, GUI tests on a headless compositor, then
-                #   the exhaustive tests in full without -race
-make test-gui   # GUI integration tests only
-make bench      # benchmarks, compared with bench/baseline.txt
-make build      # bin/bunker (linux/amd64, cgo + gtk4-devel)
+make check      # fmt → test → build → lint (rustfmt and clippy needed)
+make test       # cargo test --workspace
+make build      # target/release/bunker
+make bench      # emulator MB/s on the benchmark workloads
+make termbench  # the workloads in real windows: bunker, Ptyxis, foot (ms)
 make run        # build and run with --trace
 make install    # ~/.local/bin/bunker plus the desktop entry
-make rpm        # bin/bunker-VERSION-1.x86_64.rpm (needs nfpm)
+make rpm        # target/bunker-VERSION-1.x86_64.rpm (needs nfpm)
 make release VERSION=x.y.z   # tests, RPM, upload, publish CHANGELOG notes
 ```
 
-TESTING.md lists every suite, the GUI harness, benchmarks, allocation guards,
-and test recipes. Add a `TestGUI_…` for each user-visible feature. Use
-`make test` rather than `go test -race` (TESTING.md explains checkptr).
-
-Manual checks for rendering and input changes use bunk's
-`terminal_features.sh` (`text`, `colors`, `cursor`, `integration`, `queries`,
-`osc`, `graphics` sections).
+rustfmt and clippy come from `sudo dnf install rustfmt clippy`. TESTING.md
+lists the tests and how to check the window by hand.
 
 ---
 
 ## Configuration
 
-Config file: `~/.config/bunker/config.toml` (`--config` / `-c` overrides it).
-`bunker config init` writes a documented default. A malformed file or a
-missing explicit `--config` path fails at startup; a missing default file uses
-built-in defaults. In the GUI, an invalid edit keeps the current settings and
-shows a banner.
+Config file: `~/.config/bunker/config.toml` (`--config` / `-c` overrides
+it). `bunker config init` writes a documented default; `bunker config
+list/get/set` reads and edits one setting, checked. A malformed file fails
+at startup; in a running window, an invalid edit keeps the current settings
+and logs a warning.
 
-- `theme` — `system` (default: GNOME's palette, light or dark with the
-  desktop) or one of `bunker themes`.
-- `font` — Pango font description; `[window] padding`.
-- `[tabs]` — `position` (left, right, top, bottom), `width`, `autohide`,
-  `collapsed`.
-- `scrollback` (lines, default 10 000) and `scrollback_mb` per pane.
-- `[keys]` — every shortcut, window and pane (see shortcuts.go);
-  `[cursor] blink`; `[ui]` — border and scrollbar colours.
-- `bunker config list/get/set` reads and edits any of these from a shell.
-- `log_file` (the `--trace` file, default `/tmp/bunker.log`), `log_level`
-  (without flags, default `warn`), `cell_aspect`.
+- `theme` — `system` (GNOME's palette, light or dark with the desktop) or
+  one of `bunker themes`. `font` — a Pango description. `scrollback`.
+- `[window] padding`; `[tabs]` — `position`, `width`, `autohide`.
+- `[notify]` — `desktop` (unfocused, always, never), `command_seconds`, `bell`.
+- `[keys]` — every shortcut (`ui/keys.rs` ACTIONS), as `ctrl+shift+t`, `f2`,
+  or `none`.
 
-`config.go` is the reference for every field and its default.
+`config.rs` is the reference for every field and its default.
 
 ---
 
 ## Design Decisions
 
-- GTK runs on the main thread only; goroutines reach it through
-  `glib.IdleAdd`.
-- Nothing on the UI thread may block: no external commands (clipboard tools,
-  podman, docker), no network, no waits on other processes. Slow work runs
-  through `App.offUIThread` and hands its result back with `onUIThread`
-  (`App.post`: `glib.IdleAdd` in the window, the tcell event loop in the TUI).
-  The window uses GTK's clipboard (`gtkClipboard`) because it can own the
-  clipboard itself, and a blocking `wl-paste` would then wait on its own main
-  loop forever. Every GUI test fails with goroutine stacks if the GTK thread
-  stalls for 10 s (`onMain`), and the running app logs stacks to stderr when
-  it stalls for 5 s (`watchUIThread`).
-- The GUI reuses bunk's `App` (one per tab) without a tcell screen, so keys
-  and mouse behave the same in both frontends. Screen-dependent code is
-  behind hooks (`sizeFn`, `onEmpty`); new `App` code must not assume a screen.
-- The config file is the source of truth, and `apply` is idempotent because
-  every write also triggers the directory monitor.
-- Panes get `cols+1` columns: `Pane` reserves its last column for the TUI
-  scrollbar, and the GUI draws its scrollbar in the padding.
-- Query replies belong to the pane. They are generated in stream order in
-  both screens, including SSH panes, and never delegated to the host.
-- Graphics are ordinary cells: SIXEL, Kitty, and iTerm2 images become
-  half-block glyphs that clip, scroll, and reflow with the grid. No image
-  escape reaches the host; Kitty file and shared-memory transfers are
-  rejected; transfers, images, and caches are size-capped.
-- Rows track their used length so scrolling short lines is cheap; every cell
-  write goes through `occupy`, and the scroll-swap callback carries used
-  counts to and from the scrollback ring.
-- Unicode widths and grapheme starts come from a table filled from uniseg
-  itself, so the answers are uniseg's; only runes that may join a cluster go
-  through full segmentation.
-- The PTY pre-scanners jump between ESC bytes with `bytes.IndexByte`; their
-  byte-at-a-time originals are kept in `scanref_test.go` as references.
-- Every shortcut is under `[keys]`: bunk's pane actions (`keybindingDefaults`)
-  and the window's (`windowShortcuts`), in one syntax (`ctrl+shift+t`, `f2`,
-  `none`; GTK's `<Control>Right` is converted). The window matches its keys
-  first, by keyval or by the key's unshifted keyval, so a window action wins
-  a clash; `findKeyClashes` reports clashes in a banner and on
-  `bunker config set`, and Preferences asks before moving a key. Adding a
-  setting to `bunker config` means adding it to `settings()` with a
-  validator.
-- Alerts: vt10x reports BEL, OSC 9/777/99, and OSC 133;C/D in stream order
-  (`WithAlertCallback`); the pane adds durations and, for shells without
-  OSC 133, a finished command when the shell gets the terminal back
-  (`foregroundChanged`, from the 1 s foreground poll). The GUI lights the
-  tab only when it is not in view, and notifies only while the window is
-  unfocused by default. GNotification uses the freedesktop backend because
-  a window process has no D-Bus name for GNOME to call back on click.
-- Tabs reorder with a `GestureDrag` on the strip (`installReorder`), not
-  GTK drag-and-drop, and the strip has its own layout manager
-  (`stripLayout`): the dragged tab follows the pointer and the others slide
-  out of its way, as in Ptyxis, with no drag icon or drop highlight.
-- `[cursor] blink` is system/on/off as in Ptyxis; blinking stops after
-  GNOME's blink timeout without input, so an idle window does not wake up.
-- Keyboard passthrough (Ctrl+F12) is per pane and also hands window shortcuts
-  to the program; the PASS badge takes priority over other badges.
-- Kitty keyboard state belongs to the foreground process group that
-  negotiated it.
-- `--debug` logs to stderr and `--trace` to `/tmp/bunker.log`, as the
-  standards say. Trace logs contain terminal output and /tmp is shared, so
-  the file is used only if it is a regular file this user owns, never
-  through a symlink or a FIFO, at mode 0600 (see SECURITY.md).
-- Errors nobody can act on (a write to a program that has exited) are
-  logged at trace level through `Pane.feed`, `Pane.writePTY`, and
-  `State.reply` rather than ignored.
-- Releases take an explicit `VERSION` and require a matching CHANGELOG.md
-  section, which becomes the release notes. A release carries one RPM
-  (`nfpm.yaml`): grm installs it with dnf, which brings the launcher, icons,
-  and GTK in one package. `make rpm` stages the launcher and icons with
-  `bunker install-desktop --data-dir … --exec /usr/bin/bunker`, so source
-  installs and the RPM ship the same files; `TestNFPMShipsWhatInstallDesktopStages`
-  keeps nfpm.yaml in step.
-- Only linux/amd64 is built: GTK is linked through cgo.
-- Every pane exports `BUNK=1`, so `bunk` and `bunker tui` refuse to nest
-  inside bunker, and shell rc files can skip auto-starting bunk.
+- GTK runs on the main thread only. Nothing there may block: PTY reads and
+  writes have their own threads, `/proc` and git are read by the session's
+  watcher thread, and config files are written with `gio::spawn_blocking`.
+- One `Terminal` per session sits behind a mutex. The reader parses under
+  it; drawing copies what changed and shapes after releasing it, so a busy
+  program never waits on the UI.
+- Rows carry an identity that is renewed (once per parse batch) when the
+  row changes. The renderer caches each row's drawing by identity.
+- Cell sizes are whole device pixels at the real (fractional) scale, and
+  the grid's origin is moved onto a pixel; box-drawing lines snap to device
+  pixels. Otherwise touching backgrounds leave hairline seams at 125%.
+- On resize, history is rewrapped from the cells. The cursor's line and the
+  rows below it are only cut or padded, as xterm does: the program there
+  (readline, a TUI on the main screen) redraws them assuming that, and
+  rewrapping them makes the redraw leave pieces of old prompts.
+- Unicode widths and grapheme joining come from tables `build.rs`
+  generates with unicode-segmentation and unicode-width, so the fast path
+  agrees with full segmentation (tests check every code point).
+- Images belong to the row they start on: they scroll, rewrap, and are
+  erased with it. They are drawn as GPU textures over the cells they
+  cover; those cells are cleared when an image is placed.
+- Mouse/focus reporting and kitty keyboard flags belong to the process group
+  that set them (`session.rs`): after an ssh drop the shell gets neither.
+- A coding agent's state comes from its title where it says (Claude Code
+  starts it with ◐/◑ while working, ✳ while waiting); otherwise from
+  output, ignoring output right after typing, mouse reports, or focus.
+- Query replies come from terminal state; the title is never reported
+  back. XTVERSION answers VTE(8203) and panes export VTE_VERSION, since
+  programs enable features by terminal name.
+- Desktop notifications use the freedesktop backend (set for bunker, kept
+  out of child programs): windows are non-unique, so GNOME could not call
+  back a click.
+- Dependencies are gtk4, libc, unicode-width, unicode-segmentation, and
+  toml_edit; anything more needs agreement first.
 
 ---
 
 ## Gotchas
 
-- gotk4 keeps a Go-subclassed widget (`termView`) alive until GLib disposes
-  it, and the Wayland input method holds its widget. Closing a tab clears the
-  IM client, disposes the view and the row, and drops the tab's panes;
-  `TestGUI_NoLeaks` guards it.
-- gotk4's `CSSProvider.ConnectParsingError` crashes converting the GError;
-  connect `"parsing-error"` with `Connect` and a no-argument func instead.
-- GTK menus show neither markup nor an icon beside a label; entries that need
-  either (the tab menu's Colour swatches) are custom children
-  (`PopoverMenu.AddChild`).
-- gotk4 frees a `gsk.Transform` that GTK has taken over (the input of
-  `Translate`, the argument of `Widget.Allocate`): allocate with a
-  transform in C (`bunker_allocate_at` in gui_strip.go).
-- Never retain `gsk.RenderNode` values: gotk4 wraps them with GObject
-  refcounting although they are not GObjects.
-- `third_party/gotk4` is a separate module (`./...` does not test it), and a
-  change under `core/glib` recompiles GTK, which takes about 9 minutes.
-- Cursor shape and cell content must be read under the same `Pane.mu`
-  acquisition; `TestReadPTYSingleLock_ClaudeCursorRace` guards it.
-- In the TUI, bunk owns the terminal: never log to stderr; diagnostics go
-  through slog to the log file.
-- Fix emulator bugs in `internal/vt10x` rather than working around them.
-- `TERMINAL_AUDIT.md` records which terminal features are implemented,
-  partial, or missing; update it when a feature changes.
+- Removing a widget while it is losing focus (the rename entry in its
+  focus-leave handler) hangs GTK walking a destroyed widget; remove it from
+  an idle callback.
+- A `GestureDrag` on a widget that moves (the sidebar handle) reports
+  offsets in its moved coordinates; take positions in the window's.
+- A widget's `hexpand` propagates up from its children: set it explicitly
+  on containers that must not grow (the sidebar).
+- A widget's `scale_factor` is an integer; the surface's `scale()` is the
+  fractional one cell sizes must use.
+- Dev windows started from an agent's shell inherit its environment
+  (CLAUDECODE, CLAUDE_CODE_CHILD_SESSION, …); start them without it.
+- `TERMINAL_AUDIT.md` records which terminal features are implemented;
+  update it when a feature changes.
 
 ---
 
 ## Known Issues
 
-- Coloured output is about 1.4× slower than Ptyxis and Ghostty: bunk's
-  pre-scanners still read every byte before the emulator does.
-- `bunker tui` duplicates `bunk` itself.
+- Splits, zoom, and pane navigation are not rebuilt yet.
+- Cursor blinking, the input method's preedit text, and `[ui]` border and
+  scrollbar colours are not implemented.

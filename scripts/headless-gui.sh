@@ -1,9 +1,9 @@
 #!/bin/sh
 # Run a command against a private headless GNOME compositor (mutter) with its
 # own D-Bus session, so GUI tests render whether or not the desktop is
-# locked, and never touch the user's session. Used by `make test`.
+# locked, and never touch the user's session. See TESTING.md.
 #
-#   dbus-run-session -- scripts/headless-gui.sh go test ./...
+#   dbus-run-session -- scripts/headless-gui.sh target/release/bunker
 set -e
 export WAYLAND_DISPLAY="wl-bunker-test-$$"
 unset DISPLAY

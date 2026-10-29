@@ -62,7 +62,7 @@ Available grouped diagnostics:
   osc          ${SCRIPT_DIR}/06_osc_smoke.sh
                Automated OSC 10/11/12 set/query/reset and DECRQM assertions
   graphics     ${SCRIPT_DIR}/07_graphics.sh
-               Static images, pane clipping, resize, and scrollback
+               Static images, clipping, resize, and scrollback
 
 Run all groups:
   bash terminal_features.sh all

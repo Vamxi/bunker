@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = ["crates/vt", "crates/bunker"]
+
+[workspace.package]
+version = "0.7.0"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+
+[profile.dev.build-override]
+opt-level = 2
+
+[profile.release.build-override]
+opt-level = 2
+
+[profile.dev.package.bunker-vt]
+opt-level = 2

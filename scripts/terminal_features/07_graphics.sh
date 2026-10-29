@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 section "Pane-local static graphics"
 info "Images are rendered as coloured half-block cells; native host graphics are not required."
-expect "Each image stays inside its pane. Split/resize and scroll back to check clipping and persistence."
+expect "Each image stays inside the window. Resize and scroll back to check clipping and persistence."
 
 section "SIXEL: red above blue"
 printf '%s' "${DCS}0;1q#1;2;100;0;0!64~-!64~-!64~-!64~-#2;2;0;0;100!64~-!64~-!64~-!64~${ST}"
@@ -22,5 +22,5 @@ section "iTerm2: red GIF, scaled to 8 by 3 cells"
 printf '%s' "${OSC}1337;File=inline=1;width=8;height=3;preserveAspectRatio=0:R0lGODdhAQABAIAAAP8AAAAAACwAAAAAAQABAAACAkQBADs=${BEL}"
 printf '\r\n'
 note "Only static in-band images are supported. Animation, native layers, files, and shared memory are not."
-pause_for_input "  Resize the pane, inspect scrollback, then press Enter. "
+pause_for_input "  Resize the window, inspect scrollback, then press Enter. "
 script_done

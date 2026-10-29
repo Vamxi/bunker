@@ -7,14 +7,14 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib.sh"
 
 section "Host Integration"
-info "This script checks terminal-host integration features that depend on escape sequences reaching the outer terminal."
+info "This script checks terminal-host integration features that depend on escape sequences the terminal acts on."
 expect "Hyperlinks should be clickable, bracketed paste should toggle cleanly, and OSC 133 markers should be observable in terminals that support shell integration."
-diagnose "If bunk swallows these features, inspect OSC forwarding and event-loop writes to the host terminal."
+diagnose "If one is ignored, inspect its OSC handler in crates/vt/src/osc.rs and the event in ui/window.rs."
 
 section "OSC 8 Hyperlinks"
-printf "  Click this link -> ${OSC}8;;https://github.com/jsnjack/bunk${ST}bunk on GitHub${OSC}8;;${ST}\n"
+printf "  Click this link -> ${OSC}8;;https://github.com/Vamxi/bunker${ST}bunker on GitHub${OSC}8;;${ST}\n"
 expect "In supporting terminals, Ctrl+click or regular click should open the URL."
-diagnose "If the text is visible but not clickable through bunk, inspect OSC 8 passthrough in the scanner/render drain path."
+diagnose "If the text is visible but not clickable, inspect OSC 8 in osc.rs and link clicks in ui/view.rs."
 
 section "Bracketed Paste"
 printf "  Enabling bracketed paste (${CSI}?2004h) then disabling (${CSI}?2004l)...\n"
@@ -32,6 +32,6 @@ printf "${OSC}133;A${ST}${OSC}133;B${ST}"
 printf "sample command under OSC 133 markers\n"
 printf "${OSC}133;C${ST}${OSC}133;D;0${ST}"
 expect "These markers are non-printing. In a terminal with shell integration, look for jump-to-prompt, prompt separators, or command timing tied to the emitted command line above."
-diagnose "If the outer terminal loses prompt integration through bunk, inspect OSC 133 passthrough."
+diagnose "If long commands never reach the tab, inspect OSC 133 in osc.rs."
 
 script_done

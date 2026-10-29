@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 section "ANSI Palette"
 info "This script focuses on color rendering: ANSI 16-color, 256-color, truecolor, and colored underlines."
 expect "Color ramps should be smooth, palette blocks should be distinct, and resets should prevent color bleed into following text."
-diagnose "If entire sections go monochrome or show wrong hues, inspect vt10x SGR color parsing and render color conversion."
+diagnose "If entire sections go monochrome or show wrong hues, inspect SGR colour parsing (crates/vt/src/csi.rs) and colour resolution (ui/render.rs)."
 
 section "ANSI 8 + Bright 16"
 printf "  FG (30-37):  "
@@ -58,7 +58,7 @@ for i in {232..255}; do
 done
 printf "\n"
 expect "The color cube should show orderly hue changes and the grey ramp should move from dark to light without abrupt jumps."
-diagnose "If everything after color 15 disappears or flattens, inspect 48;5 parsing in vt10x or tcell palette mapping."
+diagnose "If everything after color 15 disappears or flattens, inspect 48;5 parsing in csi.rs or the palette in crates/vt/src/colors.rs."
 
 section "Truecolor Gradients"
 printf "  Red gradient:    "

@@ -3,6 +3,65 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
+## 0.7.0
+
+bunker is rewritten in Rust, with its own terminal emulator in place of
+bunk. Your config file carries over: settings that no longer apply (split
+and zoom keys, the collapsed sidebar, cursor blinking) are kept in the
+file and ignored.
+
+### Added
+
+- Each tab has a circle in place of its number. Its ring carries the
+  colour tag, and inside it shows what the tab is doing: a coding agent
+  working (a spinning arc) or waiting for you (a dot), a command running, a
+  long command finished or failed, or a bell. Neighbouring tabs of the
+  same colour are joined by a line between their circles.
+- The sidebar shows three lines per tab (title; directory or SSH host;
+  git branch and what runs) and can be resized by dragging its edge, down
+  to a minimum width.
+- Double-click a tab to rename it; clicking anywhere else finishes the
+  rename.
+- Images are drawn as real pixels (SIXEL, kitty graphics, iTerm2) instead
+  of coloured half-blocks.
+- Search (Ctrl+F) highlights every match and shows "3 of 12"; Enter and
+  Shift+Enter step through them.
+- Desktop notifications when a long command finishes, a program asks for
+  attention, or it sends a notification, while bunker is in the
+  background; clicking one brings up its tab. Set when in Preferences or
+  `[notify] desktop`.
+- Preferences has a theme picker with previews, nine to a page, and a
+  Keyboard page to record a new key for any shortcut, with a warning when
+  it clashes.
+- Changes in Preferences apply at once; edits to the config file from
+  anywhere apply while bunker runs.
+- `bunker config list/get/set` checks values; key bindings accept GTK
+  spellings such as `<Control>Right` too.
+
+### Changed
+
+- Faster: in a window at the same size, the benchmark workloads take
+  699 ms against 1504 ms for 0.6 (foot 686 ms, Ptyxis 1038 ms), with about
+  half the memory.
+
+### Fixed
+
+- Resizing the window no longer leaves pieces of old prompts on the
+  shell's line (`vamsi@host vamsi@ho…`).
+- Coloured rows and box-drawing borders, such as Claude Code's input box,
+  join without hairline seams at fractional scaling (125%).
+- A click in a program that reports the mouse, such as Claude Code, clears
+  a selection at once.
+
+### Removed
+
+- Splits, zoom, and pane navigation. They will come back in a later
+  release.
+- The collapsed sidebar.
+- `bunker tui`: run [bunk](https://github.com/jsnjack/bunk) in a terminal
+  instead.
+- Cursor blinking: the cursor is drawn steady.
+
 ## 0.6.3
 
 ### Fixed

@@ -1,4 +1,2 @@
-bin/
-/bunker
+/target/
 .monova*
-bench/latest.txt

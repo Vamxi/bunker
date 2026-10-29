@@ -11,7 +11,7 @@ require_query_tty
 section "Terminal Queries"
 info "This script exercises protocol-level terminal queries and prints raw responses in cat -v form for quick diagnosis."
 expect "Each query should return a recognizable response promptly. Missing, delayed, or malformed replies usually indicate parser or passthrough regressions."
-diagnose "When a specific query fails, check the subsystem named beside it: vt10x CSI/STR handling, pane query scanner, or OSC passthrough."
+diagnose "When a specific query fails, check the handler named beside it: CSI replies in crates/vt/src/csi.rs, DCS and OSC replies in osc.rs."
 
 section "DA1 - Primary Device Attributes"
 printf "  Query:    ^[[c\n"
@@ -19,7 +19,7 @@ printf "  Response: "
 r=$(query_terminal "${CSI}c")
 printf '%s\n' "$r"
 expect "Bunk typically reports ^[[?62;1;2;4;6;9;15;22c"
-diagnose "If empty, inspect pane-side DA handling."
+diagnose "If empty, inspect DA1 in csi.rs."
 
 section "DA2 - Secondary Device Attributes"
 printf "  Query:    ^[[>c\n"
@@ -27,7 +27,7 @@ printf "  Response: "
 r=$(query_terminal "${CSI}>c")
 printf '%s\n' "$r"
 expect "Bunk typically reports ^[[>0;279;0c"
-diagnose "If malformed, inspect DA2 handling in pane query responses."
+diagnose "If malformed, inspect DA2 in csi.rs."
 
 section "DA3, DSR, and DECRQSS"
 printf '  DA3: %s\n' "$(query_terminal "${CSI}=c")"
@@ -41,7 +41,7 @@ printf "  Response: "
 r=$(query_terminal "${CSI}>0q")
 printf '%s\n' "$r"
 expect "Bunk typically reports DCS >|VTE(8203) ST"
-diagnose "If missing, inspect XTVERSION detection in pane query scanning."
+diagnose "If missing, inspect XTVERSION in csi.rs."
 
 section "CPR - Cursor Position Report"
 printf "  Query:    ^[[6n\n"
@@ -84,7 +84,7 @@ printf "  Response:        "
 r=$(query_terminal "${CSI}?2004\$p")
 printf '%s\n' "$r"
 expect "^[[?2004;2\$y when bracketed paste is currently reset"
-diagnose "If this never changes, inspect vt10x QueryPrivateMode or pane DECRQM replies."
+diagnose "If this never changes, inspect DECRQM (report_private_mode) in csi.rs."
 
 section "OSC 10/11/12 Color Queries"
 printf "  Query OSC 10 in alt-screen: CSI ?1049h, OSC 10;? ST, CSI ?1049l\n"
@@ -92,7 +92,7 @@ printf "  Response: "
 r=$(query_terminal_alt "${OSC}10;?${ST}")
 printf '%s\n' "$r"
 expect "OSC 10;rgb:xxxx/xxxx/xxxx ST"
-diagnose "If empty only in bunk, inspect theme defaults and OSC query ordering."
+diagnose "If empty only in bunker, inspect the palette in crates/vt/src/colors.rs and OSC 10/11 in osc.rs."
 
 printf "  Query OSC 11 in alt-screen: CSI ?1049h, OSC 11;? ST, CSI ?1049l\n"
 printf "  Response: "
@@ -106,7 +106,7 @@ printf "  Response: "
 r=$(query_terminal_alt "${OSC}12;?${ST}")
 printf '%s\n' "$r"
 expect "OSC 12;rgb:xxxx/xxxx/xxxx ST when the cursor color is known; empty is acceptable otherwise"
-diagnose "If set/query/reset semantics break, inspect vt10x OSC 12 and 112 handling."
+diagnose "If set/query/reset semantics break, inspect OSC 12 and 112 in osc.rs."
 
 section "Kitty Keyboard Protocol"
 printf "  Query:    ^[[?u\n"

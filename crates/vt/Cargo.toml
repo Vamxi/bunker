@@ -1,0 +1,18 @@
+[package]
+name = "bunker-vt"
+description = "Terminal emulator core for bunker: parser, screen, scrollback, reflow, key encoding"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+unicode-width = "0.2"
+unicode-segmentation = "1"
+
+[build-dependencies]
+unicode-segmentation = "1"
+unicode-width = "0.2"
+
+[lints]
+workspace = true

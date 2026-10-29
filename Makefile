@@ -1,93 +1,60 @@
 BINARY  := bunker
-PWD     := $(shell pwd)
-PKG     := ./...
-# Releases pass the version explicitly: make release VERSION=0.2.0
+# Releases pass the version explicitly: make release VERSION=0.7.0
 VERSION ?= 0.0.0
-LDFLAGS  = -ldflags="-X main.Version=$(VERSION)"
+RELEASE := target/release/$(BINARY)
+RPM      = target/$(BINARY)-$(VERSION)-1.x86_64.rpm
+
+# nfpm installs with go install, into ~/go/bin.
+export PATH := $(PATH):$(HOME)/go/bin
 
 # Formatting, tests, and binaries share files even with make -j.
 .NOTPARALLEL:
 
-export PATH := $(PATH):$(shell go env GOPATH)/bin
+# A release build names its version; a development build the crate's.
+BUILD_ENV := $(if $(filter-out 0.0.0,$(VERSION)),BUNKER_VERSION=$(VERSION))
 
-# -race also enables checkptr, which rejects the uintptr→pointer conversions
-# in gotk4's generated marshallers. Keep checkptr on for bunker's own code.
-RACEFLAGS := -race -gcflags='github.com/diamondburned/gotk4/pkg/...=-d=checkptr=0'
-BENCHSTAT := go run golang.org/x/perf/cmd/benchstat@latest
+RUST_TOOLS := Install them with: sudo dnf install rustfmt clippy
 
-# GUI tests run on a private headless compositor when mutter is installed,
-# so they work with the screen locked and never touch the desktop session.
-HEADLESS := $(if $(shell command -v mutter 2>/dev/null),dbus-run-session -- ./scripts/headless-gui.sh)
-
-# Tests that check fast paths against references over every input they can
-# (all of Unicode, thousands of random streams). They run sampled under the
-# race detector and in full here.
-EXHAUSTIVE := TestUniInfoMatchesUniseg|TestFastScannersMatchReference|TestUsedInvariant
-
-# Everything, including the GUI integration tests. See TESTING.md.
-test:
-	$(HEADLESS) go test $(PKG) github.com/gdamore/tcell/v2/... -count=1 $(RACEFLAGS)
-	BUNKER_NO_GUI_TESTS=1 go test . ./internal/vt10x -run '$(EXHAUSTIVE)' -count=1
-
-# Only the GUI integration tests.
-test-gui:
-	$(HEADLESS) go test . -run 'TestGUI_' -count=1 -v
-
-# Benchmarks, compared with the committed baseline when there is one.
-bench:
-	mkdir -p bench
-	$(HEADLESS) go test ./... -run '^$$' -bench . -benchmem -count 6 | tee bench/latest.txt
-	@if [ -f bench/baseline.txt ]; then $(BENCHSTAT) bench/baseline.txt bench/latest.txt; fi
-
-# Accept the latest results as the new baseline (commit bench/baseline.txt).
-bench-baseline:
-	cp bench/latest.txt bench/baseline.txt
-
-vet:
-	go vet $(PKG)
-
-fmt:
-	@command -v goimports >/dev/null 2>&1 || { \
-	  echo "goimports is not installed. Install it with:"; \
-	  echo "  go install golang.org/x/tools/cmd/goimports@latest"; \
-	  exit 1; \
-	}
-	goimports -w $$(find . -name '*.go' -not -path './third_party/*')
-
-lint: vet
-	@command -v golangci-lint >/dev/null 2>&1 || { \
-	  echo "golangci-lint is not installed. Install it with:"; \
-	  echo "  grm install golangci/golangci-lint"; \
-	  exit 1; \
-	}
-	golangci-lint run
-
-check: fmt vet build lint
+# Format, test, build, lint: run after every change.
+check: fmt test build lint
 	@echo "==> make check: all green"
 
-standards:
-	curl -sL https://raw.githubusercontent.com/jsnjack/standards/master/AGENTS.universal.md \
-	    -o AGENTS.universal.md
-	curl -sL https://raw.githubusercontent.com/jsnjack/standards/master/AGENTS.go.md \
-	    -o AGENTS.go.md
+fmt:
+	@command -v rustfmt >/dev/null 2>&1 || { echo "rustfmt is not installed. $(RUST_TOOLS)"; exit 1; }
+	cargo fmt --all
 
-# bunker links GTK4 through cgo, so it builds natively for linux/amd64 only
-# (needs gtk4-devel). The first build compiles the GTK bindings (~9 min);
-# later builds are cached.
-bin/$(BINARY): bin/$(BINARY)_linux_amd64
-	cp $< $@
-	ln -sf bin/$(BINARY) $(BINARY)
-bin/$(BINARY)_linux_amd64: test
-	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $@
+test:
+	cargo test --workspace
 
-build: bin/$(BINARY)
+build:
+	$(BUILD_ENV) cargo build --release -p $(BINARY)
+	@echo "==> $(RELEASE)"
+
+lint:
+	@command -v cargo-clippy >/dev/null 2>&1 || { echo "clippy is not installed. $(RUST_TOOLS)"; exit 1; }
+	cargo clippy --workspace --all-targets -- -D warnings
+
+# Emulator throughput on the benchmark workloads (no window).
+bench:
+	cargo run --release -q -p bunker-vt --example workloads -- target/workloads
+	cargo run --release -q -p bunker-vt --example throughput -- target/workloads
+
+# The same workloads in real windows: bunker, Ptyxis, foot (scripts/termbench.sh).
+termbench: build
+	scripts/termbench.sh
+
+run: build
+	$(RELEASE) --trace
+
+# Install the binary to ~/.local/bin and add bunker to the app grid.
+install: build
+	install -Dm755 $(RELEASE) $(HOME)/.local/bin/$(BINARY)
+	$(HOME)/.local/bin/$(BINARY) install-desktop
 
 release-version:
 	@case "$(VERSION)" in 0.0.0) echo "usage: make release VERSION=x.y.z"; exit 1;; esac
 	@if gh release view "v$(VERSION)" -R Vamxi/$(BINARY) >/dev/null 2>&1; then echo "v$(VERSION) is already released"; exit 1; fi
 	@grep -q '^## $(VERSION)$$' CHANGELOG.md || { echo "CHANGELOG.md has no '## $(VERSION)' section"; exit 1; }
-
-RPM = bin/$(BINARY)-$(VERSION)-1.x86_64.rpm
 
 # One package with the binary, launcher, and icons (see nfpm.yaml).
 rpm: build
@@ -96,28 +63,23 @@ rpm: build
 	  echo "  go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest"; \
 	  exit 1; \
 	}
-	rm -rf bin/pkgroot
-	bin/$(BINARY)_linux_amd64 install-desktop --data-dir bin/pkgroot/usr/share --exec /usr/bin/$(BINARY)
+	rm -rf target/pkgroot
+	$(RELEASE) install-desktop --data-dir target/pkgroot/usr/share --exec /usr/bin/$(BINARY)
 	VERSION=$(VERSION) nfpm package --config nfpm.yaml --packager rpm --target $(RPM)
 
 # The release carries only the RPM: grm installs it with dnf.
-release: release-version rpm
+release: release-version test rpm
 	GITHUB_TOKEN="$${GITHUB_TOKEN:-$$(gh auth token)}" grm release Vamxi/$(BINARY) \
 		-f $(RPM) \
 		-t "v$(VERSION)"
-	awk '/^## /{p = ($$2 == "$(VERSION)"); next} p' CHANGELOG.md > bin/notes.md
-	gh release edit "v$(VERSION)" -R Vamxi/$(BINARY) --notes-file bin/notes.md
+	awk '/^## /{p = ($$2 == "$(VERSION)"); next} p' CHANGELOG.md > target/notes.md
+	gh release edit "v$(VERSION)" -R Vamxi/$(BINARY) --notes-file target/notes.md
 
-run: test
-	go build -o $(BINARY) .
-	./$(BINARY) --trace
-
-# Install the binary to ~/.local/bin and add bunker to the app grid.
-install: build
-	install -Dm755 bin/$(BINARY) $(HOME)/.local/bin/$(BINARY)
-	$(HOME)/.local/bin/$(BINARY) install-desktop
+standards:
+	curl -sL https://raw.githubusercontent.com/jsnjack/standards/master/AGENTS.universal.md \
+	    -o AGENTS.universal.md
 
 clean:
-	rm -rf bin/ $(BINARY)
+	cargo clean
 
-.PHONY: build rpm release release-version install test test-gui bench bench-baseline vet fmt lint check standards run clean
+.PHONY: check fmt test build lint bench termbench run install release-version rpm release standards clean

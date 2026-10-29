@@ -10,7 +10,7 @@ ST="${ESC}\\"
 BEL=$'\007'
 R="${CSI}0m"
 
-# Save original stdout (the pane's PTY) to fd 3 so query functions can
+# Save original stdout (the terminal's PTY) to fd 3 so query functions can
 # write escape sequences to the terminal even inside $(...) captures.
 if [[ -t 1 ]]; then
     exec 3>&1
@@ -79,7 +79,7 @@ timed_pause() {
 require_query_tty() {
     if [[ ! -t 0 || ! -t 1 ]]; then
         printf 'This script requires an interactive TTY on stdin/stdout.\n' >&2
-        printf 'Run it directly in a real terminal (for bunk, inside a pane attached to one).\n' >&2
+        printf 'Run it directly in a terminal, not through a pipe.\n' >&2
         exit 1
     fi
 }
