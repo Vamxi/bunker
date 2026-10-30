@@ -25,6 +25,9 @@ const POSITIONS: [(&str, &str, TabPosition); 4] = [
 const DESKTOP: [(&str, &str); 3] =
     [("unfocused", "Window in the background"), ("always", "Always"), ("never", "Never")];
 
+/// [cursor] blink values and their labels.
+const BLINK: [(&str, &str); 3] = [("system", "Follow system"), ("on", "On"), ("off", "Off")];
+
 /// The width of a page's column of settings.
 const PAGE_WIDTH: i32 = 560;
 
@@ -50,6 +53,7 @@ pub struct Prefs {
     themes: Rc<ThemePicker>,
     font: gtk::FontDialogButton,
     padding: gtk::SpinButton,
+    blink: gtk::DropDown,
     position: gtk::DropDown,
     width: gtk::SpinButton,
     autohide: gtk::Switch,
@@ -168,7 +172,10 @@ fn row(list: &gtk::ListBox, title: &str, subtitle: &str, control: &impl IsA<gtk:
     line.add_css_class("bunker-row");
     line.append(&text);
     control.set_valign(gtk::Align::Center);
-    control.add_css_class("bunker-control");
+    // Spin buttons and drop-downs get a common width; a switch keeps its own.
+    if !control.is::<gtk::Switch>() {
+        control.add_css_class("bunker-control");
+    }
     line.append(control);
     let r = gtk::ListBoxRow::new();
     r.set_activatable(false);
@@ -238,6 +245,14 @@ impl Prefs {
         row(&g, "Font", "Monospace fonts only; Ctrl+Shift+Plus and Minus resize text in a window", &font);
         let padding = spin(0.0, 200.0, 1.0);
         row(&g, "Padding", "Space between the window edge and the text, in pixels", &padding);
+        let labels: Vec<&str> = BLINK.iter().map(|(_, l)| *l).collect();
+        let blink = gtk::DropDown::from_strings(&labels);
+        row(
+            &g,
+            "Cursor blinking",
+            "Follow system blinks when the program asks for it, otherwise as GNOME's Typing setting says",
+            &blink,
+        );
 
         // Tabs.
         let p = page(&stack, "tabs");
@@ -353,6 +368,7 @@ impl Prefs {
             themes,
             font,
             padding,
+            blink,
             position,
             width,
             autohide,
@@ -396,6 +412,15 @@ impl Prefs {
         self.padding.connect_value_changed(move |s| {
             let v = i64::from(s.value_as_int());
             o(&|p| p.change(Some("window"), "padding", v.into(), |c| c.padding = v as u32));
+        });
+        let o = on.clone();
+        self.blink.connect_selected_notify(move |d| {
+            let i = d.selected() as usize;
+            o(&|p| {
+                if let Some((name, _)) = BLINK.get(i) {
+                    p.change(Some("cursor"), "blink", (*name).into(), |c| c.cursor_blink = (*name).into());
+                }
+            })
         });
         let o = on.clone();
         self.position.connect_selected_notify(move |d| {
@@ -628,6 +653,9 @@ impl Prefs {
         self.themes.set_selected(&config.theme);
         self.font.set_font_desc(&pango::FontDescription::from_string(&config.font));
         self.padding.set_value(f64::from(config.padding));
+        if let Some(i) = BLINK.iter().position(|(n, _)| *n == config.cursor_blink) {
+            self.blink.set_selected(i as u32);
+        }
         if let Some(i) = POSITIONS.iter().position(|(_, _, p)| *p == config.tab_position) {
             self.position.set_selected(i as u32);
         }

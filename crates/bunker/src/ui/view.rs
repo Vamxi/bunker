@@ -161,8 +161,19 @@ pub struct View {
     last_frame: RefCell<Option<gsk::RenderNode>>,
     sync_since: Cell<Option<Instant>>,
     edge_timer: RefCell<Option<glib::SourceId>>,
+    /// `[cursor] blink`: on or off overrides the program and the desktop.
+    blink_setting: Cell<Option<bool>>,
+    /// Whether the cursor last drawn should blink.
+    blink_wanted: Cell<bool>,
+    /// The cursor is in the off half of a blink.
+    blink_hidden: Cell<bool>,
+    /// Blinking stops, with the cursor shown, after this.
+    blink_until: Cell<Option<Instant>>,
+    blink_timer: RefCell<Option<glib::SourceId>>,
     shortcuts: RefCell<Vec<Shortcut>>,
     on_action: RefCell<Option<ActionHandler>>,
+    /// Told when the cell size changes.
+    on_metrics: RefCell<Option<Box<dyn Fn()>>>,
     /// Frames drawn, total and longest drawing time, since the last report.
     frame_stats: Cell<FrameStats>,
     last_input: Cell<Option<Instant>>,
@@ -204,8 +215,14 @@ impl TermView {
             last_frame: RefCell::new(None),
             sync_since: Cell::new(None),
             edge_timer: RefCell::new(None),
+            blink_setting: Cell::new(None),
+            blink_wanted: Cell::new(false),
+            blink_hidden: Cell::new(false),
+            blink_until: Cell::new(None),
+            blink_timer: RefCell::new(None),
             shortcuts: RefCell::new(keys::shortcuts(&Default::default())),
             on_action: RefCell::new(None),
+            on_metrics: RefCell::new(None),
             frame_stats: Cell::new((0, Duration::ZERO, Duration::ZERO, None)),
             last_input: Cell::new(None),
             search: RefCell::new(None),
@@ -246,6 +263,12 @@ impl View {
         *self.on_action.borrow_mut() = Some(f);
     }
 
+    /// Sets what runs when the cell size changes: the font, its size, or
+    /// the display scale.
+    pub fn set_metrics_handler(&self, f: Box<dyn Fn()>) {
+        *self.on_metrics.borrow_mut() = Some(f);
+    }
+
     fn widget(&self) -> Option<TermView> {
         self.widget.upgrade()
     }
@@ -276,6 +299,9 @@ impl View {
         self.grid.set((0, 0));
         w.queue_resize();
         w.queue_draw();
+        if let Some(f) = self.on_metrics.borrow().as_ref() {
+            f();
+        }
     }
 
     /// Changes the font, keeping any zoom.
@@ -458,6 +484,7 @@ impl View {
         }
         let images = term.images_in_view();
         let shape = term.cursor_shape();
+        let blink = self.blink_setting.get().or(term.cursor_blink()).unwrap_or_else(desktop_blinks);
         let (offset, history) = (term.display_offset(), term.history());
         drop(term);
 
@@ -536,12 +563,19 @@ impl View {
             frame.append_color(&color, &rect);
         }
 
+        self.blink_wanted.set(blink);
+        if blink {
+            self.start_blink();
+        }
+        let blinked_off = blink && self.blink_hidden.get();
         if let Some(row) = cursor_row {
             let wide = row.cells().get(cx).is_some_and(|c| c.is_wide());
             let w = if wide { 2.0 * cw } else { cw };
             let (x, y) = (pad + cx as f32 * cw, pad + vy as f32 * ch);
             let color = rgba(pal.cursor().unwrap_or(pal.fg()), 1.0);
-            if self.focused.get() {
+            if blinked_off {
+                // The off half of a blink: the cell shows as it is.
+            } else if self.focused.get() {
                 match shape {
                     CursorShape::Block => {
                         frame.append_color(&color, &graphene::Rect::new(x, y, w, ch));
@@ -672,6 +706,7 @@ impl View {
 
     fn set_focused(&self, focused: bool) {
         self.focused.set(focused);
+        self.kick_blink();
         if focused {
             self.im.focus_in();
         } else {
@@ -736,6 +771,18 @@ impl View {
         *self.shortcuts.borrow_mut() = shortcuts;
     }
 
+    /// Sets `[cursor] blink`: system, on, or off.
+    pub fn set_cursor_blink(&self, mode: &str) {
+        let setting = match mode {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => None,
+        };
+        if self.blink_setting.replace(setting) != setting {
+            self.kick_blink();
+        }
+    }
+
     /// Reports whether every key goes to the program.
     pub fn passthrough(&self) -> bool {
         self.passthrough.get()
@@ -780,6 +827,10 @@ impl View {
                 self.queue_draw();
             }
             "copy_clipboard" => self.copy(),
+            // Like Ctrl+C, Ctrl+V reaches the program when it has nothing
+            // to do: with only an image on the clipboard, Claude Code reads
+            // the image itself when it sees the key.
+            "paste" if !self.clipboard_has_text() => return false,
             "paste" | "paste_clipboard" => self.paste(false),
             "font_bigger" => self.zoom(1),
             "font_smaller" => self.zoom(-1),
@@ -806,6 +857,7 @@ impl View {
         keyval: gdk::Key,
         state: gdk::ModifierType,
     ) -> glib::Propagation {
+        self.kick_blink();
         let actions: Vec<&'static str> =
             self.shortcuts.borrow().iter().filter(|s| s.matches(keyval, state)).map(|s| s.action).collect();
         if actions.contains(&"passthrough") {
@@ -850,6 +902,12 @@ impl View {
         {
             w.clipboard().set_text(&text);
         }
+    }
+
+    /// Reports whether the clipboard holds anything that pastes as text.
+    fn clipboard_has_text(&self) -> bool {
+        self.widget()
+            .is_some_and(|w| w.clipboard().formats().union_deserialize_types().contains_type(glib::Type::STRING))
     }
 
     /// Pastes the clipboard, or the primary selection.
@@ -1028,6 +1086,50 @@ impl View {
         self.queue_draw();
     }
 
+    /// Shows the cursor and blinks it from now: on typing and focus. Like
+    /// GTK's text fields, it stops after the desktop's blink timeout, so an
+    /// idle window does not keep waking up.
+    fn kick_blink(&self) {
+        let timeout = gtk::Settings::default().map_or(10, |s| s.gtk_cursor_blink_timeout()).max(1);
+        self.blink_until.set(Some(Instant::now() + Duration::from_secs(timeout as u64)));
+        // Drawing starts the timer again, from a full shown half.
+        self.stop_blink();
+        self.queue_draw();
+    }
+
+    /// Starts the blink timer, when the cursor should blink now.
+    fn start_blink(&self) {
+        let blinking = self.focused.get() && self.blink_until.get().is_some_and(|t| Instant::now() < t);
+        if !blinking || self.blink_timer.borrow().is_some() {
+            return;
+        }
+        let cycle = gtk::Settings::default().map_or(1200, |s| s.gtk_cursor_blink_time()).max(200);
+        let weak = self.widget.clone();
+        let id = glib::timeout_add_local(Duration::from_millis(cycle as u64 / 2), move || {
+            let Some(w) = weak.upgrade() else { return glib::ControlFlow::Break };
+            let Some(view) = w.imp().state.get() else { return glib::ControlFlow::Break };
+            let idle = view.blink_until.get().is_none_or(|t| Instant::now() >= t);
+            if !view.focused.get() || idle || !view.blink_wanted.get() {
+                view.blink_timer.replace(None);
+                if view.blink_hidden.replace(false) {
+                    w.queue_draw();
+                }
+                return glib::ControlFlow::Break;
+            }
+            view.blink_hidden.set(!view.blink_hidden.get());
+            w.queue_draw();
+            glib::ControlFlow::Continue
+        });
+        *self.blink_timer.borrow_mut() = Some(id);
+    }
+
+    fn stop_blink(&self) {
+        if let Some(id) = self.blink_timer.borrow_mut().take() {
+            id.remove();
+        }
+        self.blink_hidden.set(false);
+    }
+
     /// Scrolls while a selection is dragged above or below the view,
     /// faster the further out the pointer is.
     fn start_edge_scroll(&self) {
@@ -1117,6 +1219,11 @@ fn safe_link(uri: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// GNOME's cursor blink setting (Accessibility > Typing).
+fn desktop_blinks() -> bool {
+    gtk::Settings::default().is_none_or(|s| s.is_gtk_cursor_blink())
 }
 
 /// Device pixels per logical pixel for the widget's surface: fractional

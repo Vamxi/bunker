@@ -7,14 +7,18 @@
 #
 #   scripts/termbench.sh [terminal...]
 #
-# Terminals: bunker (target/release/bunker), ptyxis, foot. The workloads are
+# Terminals: bunker (target/release/bunker), ptyxis, foot, kitty, tilix,
+# bunk-gui (KITTY, TILIX, and BUNK_GUI name other binaries, such as
+# unpacked ones). The workloads are
 # the emulator benchmark's (crates/vt/examples/workloads.rs), each repeated
 # COPIES times (default 8); every one runs RUNS times (default 3) and the
 # fastest run counts. Results are milliseconds, lower is better.
 #
 # Grids are SIZE (default 100x30) where the terminal allows it: foot takes
-# it as a flag, and Ptyxis's default and saved window sizes are set for
-# the run and restored after. bunker opens at 100x30 on its own.
+# it as a flag, as do kitty (with its own config ignored), Tilix, and
+# bunk-gui, and
+# Ptyxis's default and saved window sizes are set for the run and restored
+# after. bunker opens at 100x30 on its own.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -69,6 +73,11 @@ for t in "${terminals[@]}"; do
 	bunker) cmd=("$root/target/release/bunker" -- "${inner[@]}" "${args[@]}") ;;
 	ptyxis) cmd=(ptyxis -s -x "${inner[*]} ${args[*]}") ;;
 	foot) cmd=(foot -W "$size" "${inner[@]}" "${args[@]}") ;;
+	kitty) cmd=("${KITTY:-kitty}" --config NONE -o remember_window_size=no
+		-o "initial_window_width=${size%x*}c" -o "initial_window_height=${size#*x}c"
+		"${inner[@]}" "${args[@]}") ;;
+	tilix) cmd=("${TILIX:-tilix}" --new-process --geometry="$size" -e "${inner[*]} ${args[*]}") ;;
+	bunk-gui) cmd=("${BUNK_GUI:-bunk-gui}" --size "$size" --command "${inner[*]} ${args[*]}") ;;
 	*)
 		echo "unknown terminal $t" >&2
 		continue

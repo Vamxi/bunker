@@ -224,6 +224,9 @@ pub struct Terminal {
     events: Vec<Event>,
     kitty: [Vec<u8>; 2],
     cursor_shape: CursorShape,
+    /// Whether the program asked for a blinking cursor (DECSCUSR 1/3/5) or
+    /// a steady one (2/4/6); None until it asks, or after DECSCUSR 0.
+    cursor_blink_request: Option<bool>,
     pub(crate) display_offset: usize,
     cell_pixels: (u16, u16),
     last_printed: Option<char>,
@@ -272,6 +275,7 @@ impl Terminal {
             events: Vec::new(),
             kitty: [Vec::new(), Vec::new()],
             cursor_shape: CursorShape::Block,
+            cursor_blink_request: None,
             display_offset: 0,
             cell_pixels: (8, 16),
             last_printed: None,
@@ -491,6 +495,13 @@ impl Terminal {
     /// The cursor shape.
     pub fn cursor_shape(&self) -> CursorShape {
         self.cursor_shape
+    }
+
+    /// Whether the program asked for a blinking cursor, a steady one, or
+    /// neither (None), with DECSCUSR. DECSET 12 does not count: terminfo's
+    /// cnorm sends it to every program, which would override the desktop.
+    pub fn cursor_blink(&self) -> Option<bool> {
+        self.cursor_blink_request
     }
 
     /// Reports whether the alternate screen is shown.
@@ -1230,6 +1241,7 @@ impl Terminal {
         self.palette.reset();
         self.kitty = [Vec::new(), Vec::new()];
         self.cursor_shape = CursorShape::Block;
+        self.cursor_blink_request = None;
         self.last_printed = None;
         self.event(Event::ScrollbackCleared);
         self.event(Event::TitleChanged);
@@ -1297,6 +1309,11 @@ impl Terminal {
             _ => CursorShape::Block,
         };
         self.modes.cursor_blink = matches!(ps, 1 | 3 | 5);
+        self.cursor_blink_request = match ps {
+            1 | 3 | 5 => Some(true),
+            2 | 4 | 6 => Some(false),
+            _ => None,
+        };
     }
 
     /// The DECSCUSR value for the current cursor (0 reads as 1).

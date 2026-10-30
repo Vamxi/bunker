@@ -44,6 +44,13 @@ position = "left"    # left | right | top | bottom
 width    = 220       # sidebar width in pixels when left or right
 autohide = false     # hide the tab bar while only one tab is open
 
+# "system" blinks when the program asks for a blinking cursor, and
+# otherwise follows GNOME's setting (Accessibility > Typing). "on" or "off"
+# overrides both. It blinks only while the window has focus, and stops
+# after a few seconds without typing.
+[cursor]
+blink = "system"
+
 # Alerts. A tab you are not looking at lights up when a command that ran
 # command_seconds or longer finishes (0 turns this off), when a program
 # rings the bell, or when it asks for a notification (OSC 9, 777, 99;
@@ -98,6 +105,7 @@ struct Setting {
 
 const POSITIONS: &[&str] = &["left", "right", "top", "bottom"];
 const DESKTOP: &[&str] = &["unfocused", "always", "never"];
+const BLINK: &[&str] = &["system", "on", "off"];
 
 fn settings() -> Vec<Setting> {
     let s = |name: &str, table, key, kind| Setting { name: name.into(), table, key, kind };
@@ -109,6 +117,7 @@ fn settings() -> Vec<Setting> {
         s("tabs.position", Some("tabs"), "position", Kind::OneOf(POSITIONS)),
         s("tabs.width", Some("tabs"), "width", Kind::Int(170, 560)),
         s("tabs.autohide", Some("tabs"), "autohide", Kind::Bool),
+        s("cursor.blink", Some("cursor"), "blink", Kind::OneOf(BLINK)),
         s("notify.desktop", Some("notify"), "desktop", Kind::OneOf(DESKTOP)),
         s("notify.command_seconds", Some("notify"), "command_seconds", Kind::Int(0, 86_400)),
         s("notify.bell", Some("notify"), "bell", Kind::Bool),
@@ -130,6 +139,7 @@ fn current(s: &Setting, c: &Config) -> String {
         "tabs.position" => quote(POSITIONS[c.tab_position as usize]),
         "tabs.width" => c.tab_width.to_string(),
         "tabs.autohide" => c.tab_autohide.to_string(),
+        "cursor.blink" => quote(&c.cursor_blink),
         "notify.desktop" => quote(&c.notify_desktop),
         "notify.command_seconds" => c.command_seconds.to_string(),
         "notify.bell" => c.notify_bell.to_string(),

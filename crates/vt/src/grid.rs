@@ -128,7 +128,24 @@ impl Row {
     /// The number of cells up to and including the last one that is not
     /// blank and unstyled.
     pub fn used_len(&self) -> usize {
-        self.cells.iter().rposition(|c| !c.is_default()).map_or(0, |i| i + 1)
+        // Most rows end in a run of empty cells (a scrolling log line uses
+        // a few of a hundred), so the scan skips eight at a time: a default
+        // cell is all zero bits, and OR-ing a chunk's fields compiles to a
+        // few vector instructions instead of a branch per cell.
+        // SAFETY: Cell is repr(C) and made of integers with no padding, so
+        // every byte of the slice is initialised.
+        let bytes = unsafe {
+            std::slice::from_raw_parts(self.cells.as_ptr().cast::<u8>(), std::mem::size_of_val(&self.cells[..]))
+        };
+        let mut end = self.cells.len();
+        while end >= 32 {
+            let chunk = &bytes[(end - 32) * size_of::<Cell>()..end * size_of::<Cell>()];
+            if chunk.iter().fold(0, |acc, b| acc | b) != 0 {
+                break;
+            }
+            end -= 32;
+        }
+        self.cells[..end].iter().rposition(|c| !c.is_default()).map_or(0, |i| i + 1)
     }
 
     /// Fills the row with `blank` and clears its flags.
@@ -306,6 +323,28 @@ mod tests {
             r.cells[i].ch = c as u32;
         }
         r
+    }
+
+    #[test]
+    fn used_len_matches_a_cell_by_cell_scan() {
+        // Any one field set makes a cell count, wherever it sits.
+        let marks = [
+            Cell { ch: 'x' as u32, ..Cell::default() },
+            Cell { style: StyleId(3), ..Cell::default() },
+            Cell { flags: CellFlags::SPACER, ..Cell::default() },
+        ];
+        for len in [0, 1, 7, 8, 9, 16, 17, 100, 253] {
+            for at in (0..len).chain([usize::MAX]) {
+                for mark in marks {
+                    let mut row = Row::new(len, Cell::default());
+                    if at < len {
+                        row.cells[at] = mark;
+                    }
+                    let naive = row.cells.iter().rposition(|c| !c.is_default()).map_or(0, |i| i + 1);
+                    assert_eq!(row.used_len(), naive, "len {len}, mark at {at}: {mark:?}");
+                }
+            }
+        }
     }
 
     #[test]

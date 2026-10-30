@@ -3,6 +3,33 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
+## 0.7.1
+
+### Added
+
+- The cursor blinks again. `[cursor] blink` (Preferences > Appearance)
+  is "system", "on", or "off", as in 0.6: with "system", a program that
+  asks for a blinking or steady cursor gets it, and otherwise GNOME's
+  setting decides. It blinks only while the window has focus and stops
+  after a few seconds without typing.
+
+### Changed
+
+- Output that scrolls line by line (logs, `seq`, build output) is faster:
+  rows moving into history are trimmed with a scan of eight cells at a
+  time. The emulator takes 44% less time on the scrolling benchmark.
+
+### Fixed
+
+- Pasting an image into Claude Code with Ctrl+V works. With only an image
+  on the clipboard there is no text to paste, so Ctrl+V now goes to the
+  program, which reads the image itself, as in other terminals.
+- A new window opens at 100×30 straight away on a scaled display. It used
+  to open a few columns short and grow a moment later, once the display's
+  scale was known.
+- The switches in Preferences (Bell, Hide with a single tab) are their
+  normal size instead of stretched to twice their width.
+
 ## 0.7.0
 
 bunker is rewritten in Rust, with its own terminal emulator in place of

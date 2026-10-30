@@ -64,7 +64,7 @@ rewrite). Behaviour is covered by `crates/vt/src/tests.rs` unless noted.
 | ?1004 | Focus events | OK | Same ownership rule |
 | ?1006 | SGR mouse | OK | |
 | ?1007 | Alternate scroll | OK | Wheel sends arrows on the alt screen |
-| ?12 | Cursor blink | PARTIAL | Tracked and reported; the cursor is drawn steady |
+| ?12 | Cursor blink | OK | Tracked and reported. Not taken as a blink request: terminfo's cnorm sends DECRST 12 to every program, which would override the desktop's setting |
 | ?25 | Cursor visible | OK | |
 | ?47, ?1047, ?1048, ?1049 | Alt screen, save cursor | OK | |
 | ?66 | Application keypad | OK | |
@@ -149,8 +149,8 @@ placement of an evicted image gets `ENOENT`).
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| DECSCUSR (CSI Ps SP q) | OK | Block, underline, bar |
-| Blinking | MISSING | Shapes are drawn steady |
+| DECSCUSR (CSI Ps SP q) | OK | Block, underline, bar; 1/3/5 ask for blinking, 2/4/6 for steady |
+| Blinking | OK | `[cursor] blink`: system (the program's DECSCUSR request, else GNOME's setting), on, or off. GNOME's blink time; only while focused; stops after GNOME's idle timeout |
 | DECSC/DECRC, CSI s/u | OK | |
 
 ---
@@ -177,7 +177,6 @@ images as half-block cells. The Rust core replaces both:
 - XTGETTCAP no longer reports key capabilities (it reported F1–F24 and
   modified navigation keys).
 - Splits, zoom, and pane navigation are not rebuilt yet.
-- Cursor blinking is not drawn yet.
 
 References: [xterm control sequences](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html),
 [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/),

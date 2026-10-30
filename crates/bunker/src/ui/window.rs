@@ -79,6 +79,8 @@ pub struct Window {
     list: gtk::Box,
     tabs_box: gtk::Box,
     tab_width: Cell<i32>,
+    /// The window still follows the terminal's cell size, while it opens.
+    fitting: Cell<bool>,
     title: gtk::Label,
     tabs: RefCell<Vec<Rc<Tab>>>,
     active: Cell<Option<u64>>,
@@ -117,6 +119,10 @@ const NOTIFY_INTERVAL: Duration = Duration::from_secs(3);
 
 /// The shortest time between two UI updates for one tab's output.
 const OUTPUT_COALESCE: std::time::Duration = std::time::Duration::from_millis(8);
+
+/// How long after it is shown a window keeps fitting itself to the cell
+/// size: long enough for the display's scale to arrive.
+const FIT_PERIOD: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// A tab and the window it is in.
 type TabRef = (Weak<Window>, Weak<Tab>);
@@ -245,6 +251,7 @@ impl Window {
             stack,
             list,
             tab_width: Cell::new((config.tab_width as i32).clamp(MIN_TAB_WIDTH, MAX_TAB_WIDTH)),
+            fitting: Cell::new(true),
             tabs_box,
             title,
             tabs: RefCell::new(Vec::new()),
@@ -275,7 +282,19 @@ impl Window {
             }),
         );
         win.open_tab(None, command);
-        win.size_to_terminal();
+        win.fit_to_terminal();
+        // The display's fractional scale, and with it the cell size, is
+        // only known once the window is shown; each new cell size fits the
+        // window again (see open_tab). After that the size is the user's.
+        let weak = Rc::downgrade(&win);
+        win.window.connect_map(move |_| {
+            let weak = weak.clone();
+            glib::timeout_add_local_once(FIT_PERIOD, move || {
+                if let Some(w) = weak.upgrade() {
+                    w.fitting.set(false);
+                }
+            });
+        });
         let weak = Rc::downgrade(&win);
         glib::timeout_add_local(STATUS_TICK, move || match weak.upgrade() {
             Some(w) => {
@@ -301,7 +320,11 @@ impl Window {
 
     /// Sizes the window for a terminal of the default size, as the Go
     /// version does: the tab list and header bar are measured, not guessed.
-    fn size_to_terminal(&self) {
+    /// Only while the window opens: then the size is the user's.
+    fn fit_to_terminal(&self) {
+        if !self.fitting.get() || self.window.is_maximized() {
+            return;
+        }
         let Some(tab) = self.active_tab() else { return };
         let (cw, ch) = tab.view.cell_size();
         let config = self.config.borrow().clone();
@@ -311,28 +334,19 @@ impl Window {
         let mut h = pad + DEFAULT_ROWS * ch + 0.5 + header;
         let shown = !(config.tab_autohide && self.tabs.borrow().len() < 2);
         if shown {
-            // The window is not shown yet, so the tab list cannot be
-            // measured; a sidebar is as wide as configured.
             if matches!(config.tab_position, TabPosition::Left | TabPosition::Right) {
-                w += self.tab_width.get() as f32;
+                // The sidebar and its drag handle: everything beside the
+                // terminal.
+                let beside = self.window.child().map_or(0, |body| {
+                    body.measure(gtk::Orientation::Horizontal, -1).0
+                        - self.stack.measure(gtk::Orientation::Horizontal, -1).0
+                });
+                w += beside.max(self.tab_width.get()) as f32;
             } else {
                 h += self.tabs_box.measure(gtk::Orientation::Vertical, -1).1.max(TAB_BAR_HEIGHT) as f32;
             }
         }
         self.window.set_default_size(w.ceil() as i32, h.ceil() as i32);
-        // The chrome is only measurable once shown: correct the size once
-        // the terminal has its first allocation.
-        let (win, view, widget) = (self.window.clone(), tab.view.clone(), tab.widget.clone());
-        glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
-            let (vw, vh) = (widget.width() as f32, widget.height() as f32);
-            if vw <= 0.0 {
-                return;
-            }
-            let (cw, ch) = view.cell_size();
-            let want_w = win.width() as f32 - vw + pad + DEFAULT_COLS * cw + 0.5;
-            let want_h = win.height() as f32 - vh + pad + DEFAULT_ROWS * ch + 0.5;
-            win.set_default_size(want_w.ceil() as i32, want_h.ceil() as i32);
-        });
     }
 
     /// Lets the sidebar be dragged wider or narrower, between limits, and
@@ -512,6 +526,7 @@ impl Window {
             }
             t.view.set_font(&font);
             t.view.set_padding(config.padding);
+            t.view.set_cursor_blink(&config.cursor_blink);
             if config.keys != old.keys {
                 t.view.set_shortcuts(super::keys::shortcuts(&config.keys));
             }
@@ -589,6 +604,13 @@ impl Window {
         };
         let (widget, view) = TermView::new(session, &self.font.borrow(), self.config.borrow().padding);
         view.set_shortcuts(super::keys::shortcuts(&self.config.borrow().keys));
+        view.set_cursor_blink(&self.config.borrow().cursor_blink);
+        let me = self.me.borrow().clone();
+        view.set_metrics_handler(Box::new(move || {
+            if let Some(w) = me.upgrade() {
+                w.fit_to_terminal();
+            }
+        }));
         let me = self.me.borrow().clone();
         view.set_action_handler(Box::new(clone!(
             #[strong]

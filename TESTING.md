@@ -6,7 +6,7 @@ Everything that guards bunker against regressions, and how to run it.
 make test        # cargo test --workspace
 make check       # fmt, test, build, lint: the gate before a release
 make bench       # emulator throughput on the benchmark workloads
-make termbench   # the same workloads in real windows, against Ptyxis and foot
+make termbench   # the same workloads in real windows, against other terminals
 ```
 
 ## Suites
@@ -44,6 +44,7 @@ and input in a running window.
 `make bench` writes the workloads (`crates/vt/examples/workloads.rs`: seq,
 prose, colours, Unicode, TUI) and reports the emulator's MB/s without a
 window. `make termbench` times them end to end in real windows, in ms,
-against Ptyxis and foot at the same grid size; the windows open on the
+against Ptyxis and foot at the same grid size (kitty, Tilix, and bunk-gui
+too, when named: `scripts/termbench.sh bunker kitty`); the windows open on the
 desktop one at a time. Results depend on the machine; compare runs from
 the same one.

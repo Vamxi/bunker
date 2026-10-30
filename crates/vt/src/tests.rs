@@ -273,6 +273,16 @@ fn cursor_style() {
 }
 
 #[test]
+fn cursor_blink_request() {
+    assert_eq!(run(80, 2, "").cursor_blink(), None, "no request: the desktop decides");
+    assert_eq!(run(80, 2, "\x1b[5 q").cursor_blink(), Some(true));
+    assert_eq!(run(80, 2, "\x1b[4 q").cursor_blink(), Some(false));
+    assert_eq!(run(80, 2, "\x1b[2 q\x1b[0 q").cursor_blink(), None, "DECSCUSR 0 is the default again");
+    assert_eq!(run(80, 2, "\x1b[?12l").cursor_blink(), None, "cnorm's DECRST 12 is not a request");
+    assert_eq!(run(80, 2, "\x1b[1 q\x1bc").cursor_blink(), None, "reset forgets it");
+}
+
+#[test]
 fn full_reset() {
     let mut t = run(5, 2, "1\r\n2\r\n3\x1b]2;t\x07\x1b[?1h");
     t.advance(b"\x1bc");

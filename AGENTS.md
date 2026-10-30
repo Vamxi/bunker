@@ -131,6 +131,8 @@ and logs a warning.
 - `theme` — `system` (GNOME's palette, light or dark with the desktop) or
   one of `bunker themes`. `font` — a Pango description. `scrollback`.
 - `[window] padding`; `[tabs]` — `position`, `width`, `autohide`.
+- `[cursor] blink` — `system` (the program's DECSCUSR request, else GNOME's
+  setting), `on`, or `off`.
 - `[notify]` — `desktop` (unfocused, always, never), `command_seconds`, `bell`.
 - `[keys]` — every shortcut (`ui/keys.rs` ACTIONS), as `ctrl+shift+t`, `f2`,
   or `none`.
@@ -199,5 +201,5 @@ and logs a warning.
 ## Known Issues
 
 - Splits, zoom, and pane navigation are not rebuilt yet.
-- Cursor blinking, the input method's preedit text, and `[ui]` border and
-  scrollbar colours are not implemented.
+- The input method's preedit text and `[ui]` border and scrollbar colours
+  are not implemented.

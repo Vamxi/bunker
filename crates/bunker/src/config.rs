@@ -35,6 +35,9 @@ pub struct Config {
     pub tab_width: u32,
     /// Hide the tab list while only one tab is open.
     pub tab_autohide: bool,
+    /// Cursor blinking: system (the program's request, else the desktop's
+    /// setting), on, or off.
+    pub cursor_blink: String,
     /// How long a command must run before its end lights up its tab;
     /// 0 never does.
     pub command_seconds: u64,
@@ -58,6 +61,7 @@ impl Default for Config {
             tab_position: TabPosition::Left,
             tab_width: 220,
             tab_autohide: false,
+            cursor_blink: "system".into(),
             command_seconds: 10,
             notify_bell: true,
             notify_desktop: "unfocused".into(),
@@ -125,6 +129,12 @@ pub fn parse(text: &str) -> Result<Config, String> {
     }
     if let Some(v) = bool_at(&doc, Some("tabs"), "autohide") {
         c.tab_autohide = v;
+    }
+    if let Some(v) = str_at(&doc, Some("cursor"), "blink") {
+        c.cursor_blink = match v {
+            "system" | "on" | "off" => v.to_string(),
+            other => return Err(format!("cursor.blink: unknown value {other:?}")),
+        };
     }
     if let Some(v) = int_at(&doc, Some("notify"), "command_seconds") {
         c.command_seconds = v.max(0) as u64;
@@ -281,5 +291,12 @@ mod tests {
     fn rejects_bad_input() {
         assert!(parse("theme = ").is_err());
         assert!(parse("[tabs]\nposition = \"middle\"").is_err());
+        assert!(parse("[cursor]\nblink = \"sometimes\"").is_err());
+    }
+
+    #[test]
+    fn cursor_blink() {
+        assert_eq!(parse("").unwrap().cursor_blink, "system");
+        assert_eq!(parse("[cursor]\nblink = \"off\"").unwrap().cursor_blink, "off");
     }
 }
