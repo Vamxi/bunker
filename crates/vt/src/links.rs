@@ -123,8 +123,11 @@ impl Terminal {
             let scheme = SCHEMES
                 .iter()
                 .find(|s| bytes[i..].len() >= s.len() && bytes[i..i + s.len()].eq_ignore_ascii_case(s.as_bytes()));
-            let boundary = i == 0 || !text[..i].chars().next_back().is_some_and(char::is_alphanumeric);
-            let Some(scheme) = scheme.filter(|_| boundary) else {
+            // A scheme starts with an ASCII letter, so where one matches, i
+            // is on a character boundary and the text before it can be
+            // read; i itself steps through bytes, inside characters too.
+            let Some(scheme) = scheme.filter(|_| !text[..i].chars().next_back().is_some_and(char::is_alphanumeric))
+            else {
                 i += 1;
                 continue;
             };

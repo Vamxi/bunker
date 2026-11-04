@@ -467,6 +467,11 @@ fn arbitrary_input_never_panics() {
         b"\x1b[?1049l",
         b"\x1b[4h",
         b"\x1b[?7l",
+        b"https://a.b/",
+        b"mailto:",
+        b"\x1b]8;;file:///x\x1b\\",
+        b"\x1b]8;;\x1b\\",
+        "\u{a0}\u{276f}".as_bytes(),
     ];
     for round in 0..200 {
         let mut t = Terminal::new(7 + round % 5, 3 + round % 4, 10);
@@ -484,6 +489,13 @@ fn arbitrary_input_never_panics() {
         assert!(x < t.cols() && y < t.lines());
         for y in 0..t.lines() {
             assert_eq!(t.view_row(y).cells().len(), t.cols());
+        }
+        // Pointing anywhere, in history too, finds a link or none.
+        let top = t.view_top();
+        for row in top.saturating_sub(10)..top + t.lines() as u64 {
+            for col in 0..=t.cols() {
+                let _ = t.link_at(Point::new(row, col));
+            }
         }
     }
 }
@@ -603,4 +615,28 @@ fn links() {
     assert_eq!(link(&run(40, 2, "file:///etc/hosts"), 0, 3).unwrap().uri, "file:///etc/hosts");
     assert_eq!(link(&run(40, 2, "xhttps://a.b"), 0, 5), None);
     assert_eq!(link(&run(40, 2, "https:// alone"), 0, 2), None);
+}
+
+#[test]
+fn links_next_to_wide_and_multibyte_text() {
+    // Claude Code's prompt, a no-break space, accents, CJK, and emoji around
+    // and inside URLs: looking up every cell must not panic (0.7.2 did, on
+    // the first non-ASCII character before the pointer).
+    let lines = [
+        "❯ x\u{a0}y https://a.example/é ok",
+        "日本語 https://例え.jp/パス 終わり",
+        "👍🏽 mailto:me@x.y ✳ file:///tmp/é",
+        "éhttps://not.a.link",
+    ];
+    for text in lines {
+        let t = run(24, 4, text);
+        for row in 0..4 {
+            for col in 0..24 {
+                let _ = t.link_at(Point::new(row, col));
+            }
+        }
+    }
+    let t = run(60, 2, "❯ x\u{a0}y https://a.example/é ok");
+    assert_eq!(t.link_at(Point::new(0, 8)).unwrap().uri, "https://a.example/é");
+    assert_eq!(run(40, 2, "éhttps://not.a.link").link_at(Point::new(0, 5)), None, "a scheme inside a word");
 }

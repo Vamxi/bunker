@@ -3,6 +3,14 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
+## 0.7.3
+
+### Fixed
+
+- bunker no longer crashes when the mouse moves over a line with non-ASCII
+  text, such as Claude Code's ❯ prompt. 0.7.2's link lookup read the line
+  in the middle of a character.
+
 ## 0.7.2
 
 ### Fixed
