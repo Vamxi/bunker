@@ -571,3 +571,36 @@ fn images_survive_reflow() {
     t.resize(12, 5);
     assert_eq!(t.images_in_view().len(), 1);
 }
+
+#[test]
+fn links() {
+    let link = |t: &Terminal, row: u64, col: usize| t.link_at(Point::new(row, col));
+    // OSC 8, with the text around it not part of it.
+    let t = run(40, 3, "see \x1b]8;;https://a.example/x\x1b\\the docs\x1b]8;;\x1b\\ now");
+    let l = link(&t, 0, 6).unwrap();
+    assert_eq!((l.uri.as_str(), l.runs), ("https://a.example/x", vec![(0, 4, 12)]));
+    assert_eq!(link(&t, 0, 2), None);
+    // A URL in the text, without the full stop after it.
+    let t = run(60, 3, "read https://example.com/a?b=1. Then");
+    let l = link(&t, 0, 10).unwrap();
+    assert_eq!((l.uri.as_str(), l.runs), ("https://example.com/a?b=1", vec![(0, 5, 30)]));
+    assert_eq!(link(&t, 0, 31), None, "the full stop is not part of it");
+    // Brackets: a pair inside stays, the one closing the sentence goes.
+    let t = run(80, 3, "(see https://en.wikipedia.org/wiki/Rust_(language))");
+    assert_eq!(link(&t, 0, 10).unwrap().uri, "https://en.wikipedia.org/wiki/Rust_(language)");
+    // Soft-wrapped across rows: found from either row, one run per row.
+    let t = run(20, 3, "go https://example.com/a/long/path ok");
+    let from_top = link(&t, 0, 10).unwrap();
+    assert_eq!(from_top.uri, "https://example.com/a/long/path");
+    assert_eq!(from_top.runs, vec![(0, 3, 20), (1, 0, 14)]);
+    assert_eq!(link(&t, 1, 5), Some(from_top));
+    // Laid out by a program across a row edge, with no soft wrap.
+    let t = run(20, 3, "a https://exampl.com\x1b[2;1H/rest");
+    assert!(!t.row_at(0).unwrap().wrapped(), "the row is full but not wrapped");
+    assert_eq!(link(&t, 1, 2).unwrap().uri, "https://exampl.com/rest");
+    // Other schemes; a scheme inside a word is not a link.
+    assert_eq!(link(&run(40, 2, "mail mailto:me@x.y"), 0, 8).unwrap().uri, "mailto:me@x.y");
+    assert_eq!(link(&run(40, 2, "file:///etc/hosts"), 0, 3).unwrap().uri, "file:///etc/hosts");
+    assert_eq!(link(&run(40, 2, "xhttps://a.b"), 0, 5), None);
+    assert_eq!(link(&run(40, 2, "https:// alone"), 0, 2), None);
+}

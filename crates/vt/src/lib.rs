@@ -11,6 +11,7 @@ mod csi;
 mod graphics;
 mod grid;
 mod input;
+mod links;
 mod osc;
 mod parser;
 mod reflow;
@@ -26,7 +27,8 @@ pub use grid::{Row, RowFlags};
 pub use input::{
     Key, KeyModes, KeypadKey, Mods, MouseAction, MouseButton, encode_focus, encode_key, encode_mouse, encode_paste,
 };
-pub use osc::base64_decode;
+pub use links::Link;
+pub use osc::{base64_decode, file_url_path};
 pub use parser::{Params, Parser, Perform};
 pub use select::Point;
 pub use term::{CursorShape, Event, Modes, MouseMode, Terminal};

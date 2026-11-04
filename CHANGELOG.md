@@ -3,6 +3,23 @@
 What each release brings. `make release VERSION=x.y.z` publishes the
 matching section as the GitHub release notes.
 
+## 0.7.2
+
+### Fixed
+
+- Hovering a link shows the hand pointer again, underlines the link, and
+  says "Ctrl+click to open", as 0.6 did. This works in programs that use
+  the mouse, such as Claude Code, and Ctrl+click opens the link there
+  instead of reaching the program.
+- URLs printed as text are found when they wrap onto the next line, and
+  `mailto:` and `file://` ones open too; a full stop or closing bracket
+  after a URL is left out of it.
+- File links from `ls --hyperlink` open. They name this computer as the
+  host, which bunker took for another machine; paths with spaces or other
+  escaped characters open too.
+- Scrolling with a touchpad is as fast as in 0.6 again; it had slowed to
+  a crawl.
+
 ## 0.7.1
 
 ### Added

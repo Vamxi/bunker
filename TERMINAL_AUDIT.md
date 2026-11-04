@@ -39,7 +39,7 @@ rewrite). Behaviour is covered by `crates/vt/src/tests.rs` unless noted.
 | 0 / 2 | Window title | OK | Shown on the tab; control characters dropped, length capped |
 | 4 / 104 | Palette colours, set, query, and reset | OK | |
 | 7 | Working directory | OK | Used for new tabs and the tab's directory |
-| 8 | Hyperlinks | OK | Ctrl+click; survive reflow |
+| 8 | Hyperlinks | OK | Underlined with a pointer on hover; Ctrl+click opens them, also while a program reports the mouse; survive reflow. URLs printed as text (http, https, mailto, file) work the same, across the rows they wrap onto |
 | 9 | Notification (ConEmu) and 9;4 progress | OK | Progress shows on the tab |
 | 10 / 11 / 12, 110 / 111 / 112 | Foreground, background, cursor colour | OK | Set, query, reset |
 | 52 | Clipboard | PARTIAL | Writes only; reads are never answered (SECURITY.md) |

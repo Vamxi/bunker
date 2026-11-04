@@ -100,7 +100,7 @@ fn dynamic_color(t: &mut Terminal, which: u16, spec: &str, st: &[u8]) {
 }
 
 /// The path of a `file://host/path` URL, percent-decoded.
-fn file_url_path(url: &str) -> Option<String> {
+pub fn file_url_path(url: &str) -> Option<String> {
     let rest = url.strip_prefix("file://")?;
     let path = &rest[rest.find('/')?..];
     let bytes = path.as_bytes();

@@ -38,6 +38,8 @@ crates/vt/              bunker-vt: the emulator core, no I/O, no GTK
   cell.rs               8-byte Cell, Style, StyleTable (interned, compacted)
   reflow.rs             resize: rewraps history from cells, no replay
   search.rs             find in history and screen, across soft wraps
+  links.rs              the link under the pointer: OSC 8 or a URL in the
+                        text, across the rows it wraps onto
   select.rs             text of ranges, word and line bounds
   input.rs              key, mouse, paste, and focus encoding
   colors.rs             Rgb, Theme, Palette with OSC overrides

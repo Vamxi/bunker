@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use bunker_vt::{
-    CursorShape, KeyModes, MouseAction, MouseButton, MouseMode, Point, Row, Terminal, encode_focus, encode_key,
+    CursorShape, KeyModes, Link, MouseAction, MouseButton, MouseMode, Point, Row, Terminal, encode_focus, encode_key,
     encode_mouse, encode_paste,
 };
 use gtk::glib::{self, clone};
@@ -161,6 +161,13 @@ pub struct View {
     last_frame: RefCell<Option<gsk::RenderNode>>,
     sync_since: Cell<Option<Instant>>,
     edge_timer: RefCell<Option<glib::SourceId>>,
+    /// The link under the pointer, underlined, with a pointer cursor.
+    hover: RefCell<Option<Link>>,
+    /// The cell the hovered link was looked up at.
+    hover_cell: Cell<Option<(usize, usize)>>,
+    /// The left button went down on a link with Ctrl: its release is not
+    /// the program's either.
+    link_click: Cell<bool>,
     /// `[cursor] blink`: on or off overrides the program and the desktop.
     blink_setting: Cell<Option<bool>>,
     /// Whether the cursor last drawn should blink.
@@ -215,6 +222,9 @@ impl TermView {
             last_frame: RefCell::new(None),
             sync_since: Cell::new(None),
             edge_timer: RefCell::new(None),
+            hover: RefCell::new(None),
+            hover_cell: Cell::new(None),
+            link_click: Cell::new(false),
             blink_setting: Cell::new(None),
             blink_wanted: Cell::new(false),
             blink_hidden: Cell::new(false),
@@ -486,6 +496,15 @@ impl View {
         let shape = term.cursor_shape();
         let blink = self.blink_setting.get().or(term.cursor_blink()).unwrap_or_else(desktop_blinks);
         let (offset, history) = (term.display_offset(), term.history());
+        // The hovered link's runs in view: (row, first col, end col).
+        let hover: Vec<(usize, usize, usize)> = self.hover.borrow().as_ref().map_or_else(Vec::new, |l| {
+            let top = term.view_top();
+            l.runs
+                .iter()
+                .filter(|(abs, _, _)| (top..top + lines as u64).contains(abs))
+                .map(|&(abs, c0, c1)| ((abs - top) as usize, c0, c1))
+                .collect()
+        });
         drop(term);
 
         let pal = &styles.palette;
@@ -550,6 +569,14 @@ impl View {
             let tint = rgba(pal.indexed(3), if current { 0.55 } else { 0.22 });
             let rect = graphene::Rect::new(pad + c0 as f32 * cw, pad + y as f32 * ch, (c1 + 1 - c0) as f32 * cw, ch);
             frame.append_color(&tint, &rect);
+        }
+
+        let line = font.line.max(1.0 / font.scale);
+        let under = (font.ascent + font.underline_pos).min(ch - line);
+        for (y, c0, c1) in hover {
+            let rect =
+                graphene::Rect::new(pad + c0 as f32 * cw, pad + y as f32 * ch + under, (c1 - c0) as f32 * cw, line);
+            frame.append_color(&rgba(pal.indexed(4), 1.0), &rect);
         }
 
         let color = rgba(pal.fg(), 0.28);
@@ -684,6 +711,14 @@ impl View {
             view,
             move |ctl, x, y| view.motion(x, y, ctl.current_event_state())
         ));
+        motion.connect_leave(clone!(
+            #[weak]
+            view,
+            move |_| {
+                view.hover_cell.set(None);
+                view.set_hover(None);
+            }
+        ));
         widget.add_controller(motion);
 
         let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
@@ -693,11 +728,10 @@ impl View {
             #[upgrade_or]
             glib::Propagation::Proceed,
             move |ctl, _dx, dy| {
-                let lines = match ctl.unit() {
-                    gdk::ScrollUnit::Wheel => dy * WHEEL_LINES,
-                    _ => dy / f64::from(view.cell_size().1),
-                };
-                view.wheel(lines, ctl.current_event_state());
+                // A touchpad's deltas count like wheel notches, as in 0.6:
+                // taken as pixels and divided by the cell height, a
+                // two-finger swipe barely moved.
+                view.wheel(dy * WHEEL_LINES, ctl.current_event_state());
                 glib::Propagation::Stop
             }
         ));
@@ -966,6 +1000,17 @@ impl View {
         };
         self.buttons.set(if pressed { self.buttons.get() | bit } else { self.buttons.get() & !bit });
         self.pointer.set((x, y));
+        // Ctrl+click on a link opens it, also in a program that reports the
+        // mouse, and neither half of that click reaches the program.
+        if b == MouseButton::Left {
+            if pressed && state.contains(gdk::ModifierType::CONTROL_MASK) && self.open_link_at(x, y) {
+                self.link_click.set(true);
+                return;
+            }
+            if !pressed && self.link_click.replace(false) {
+                return;
+            }
+        }
         if self.reporting(state) {
             // The program gets the click, but a selection made with Shift
             // still goes away, as it does when nothing reports the mouse.
@@ -977,8 +1022,6 @@ impl View {
             return;
         }
         match (b, pressed) {
-            (MouseButton::Left, true) if state.contains(gdk::ModifierType::CONTROL_MASK) && self.open_link_at(x, y) => {
-            }
             (MouseButton::Left, true) => {
                 let (col, row) = self.cell_at(x, y);
                 let p = Point::new(self.session.term().view_top() + row as u64, col);
@@ -1023,23 +1066,43 @@ impl View {
     }
 
     /// The link under a position: an OSC 8 hyperlink, or a URL in the text.
-    fn link_at(&self, x: f64, y: f64) -> Option<String> {
+    /// The link under a widget position that bunker would open.
+    fn link_at(&self, x: f64, y: f64) -> Option<Link> {
+        if self.rows_outside(y) != 0 {
+            return None;
+        }
         let (col, row) = self.cell_at(x, y);
         let t = self.session.term();
-        let r = t.view_row(row);
-        let cell = r.cells().get(col)?;
-        let id = t.style(cell.style).link;
-        if id != 0 {
-            return t.link(id).map(str::to_string);
+        t.link_at(Point::new(t.view_top() + row as u64, col)).filter(|l| safe_link(&l.uri))
+    }
+
+    /// Underlines the link under the pointer and shows a pointer cursor.
+    fn update_hover(&self, x: f64, y: f64) {
+        let cell = self.cell_at(x, y);
+        if self.hover_cell.replace(Some(cell)) != Some(cell) {
+            self.set_hover(self.link_at(x, y));
         }
-        let (a, b) = t.word_bounds(Point::new(t.view_top() + row as u64, col));
-        let word = t.text(a, b);
-        let word = word.trim_end_matches(['.', ',', ';', ':', ')', ']', '\'', '"']);
-        (word.starts_with("https://") || word.starts_with("http://")).then(|| word.to_string())
+    }
+
+    fn set_hover(&self, link: Option<Link>) {
+        if *self.hover.borrow() == link {
+            return;
+        }
+        if let Some(w) = self.widget() {
+            w.set_cursor_from_name(Some(if link.is_some() { "pointer" } else { "text" }));
+            w.set_tooltip_text(link.is_some().then_some("Ctrl+click to open"));
+            w.queue_draw();
+        }
+        *self.hover.borrow_mut() = link;
     }
 
     fn open_link_at(&self, x: f64, y: f64) -> bool {
-        let Some(uri) = self.link_at(x, y).filter(|u| safe_link(u)) else { return false };
+        let Some(mut uri) = self.link_at(x, y).map(|l| l.uri) else { return false };
+        // A local file goes to the desktop without the host name that ls
+        // --hyperlink puts in it, which GIO would take for another machine.
+        if let Some(path) = file_link(&uri).map(|(_, encoded)| encoded) {
+            uri = format!("file://{path}");
+        }
         let Some(w) = self.widget() else { return false };
         let window = w.root().and_downcast::<gtk::Window>();
         gtk::UriLauncher::new(&uri).launch(window.as_ref(), gtk::gio::Cancellable::NONE, move |res| {
@@ -1052,6 +1115,7 @@ impl View {
 
     fn motion(&self, x: f64, y: f64, state: gdk::ModifierType) {
         self.pointer.set((x, y));
+        self.update_hover(x, y);
         let cell = self.cell_at(x, y);
         if self.reporting(state) {
             if cell != self.last_cell.get() {
@@ -1205,11 +1269,9 @@ fn safe_link(uri: &str) -> bool {
         "http" | "https" => rest.strip_prefix("//").is_some_and(|r| !r.is_empty() && !r.starts_with('/')),
         "mailto" => !rest.is_empty(),
         "file" => {
-            let Some(path) = rest.strip_prefix("//").and_then(|r| r.find('/').map(|i| &r[i..])) else { return false };
-            let host = &rest[2..rest.len() - path.len()];
-            if !host.is_empty() && host != "localhost" {
+            let Some(path) = file_link(uri).and_then(|(_, p)| bunker_vt::file_url_path(&format!("file://{p}"))) else {
                 return false;
-            }
+            };
             use std::os::unix::fs::PermissionsExt;
             // Programs and launchers would run, not open.
             if path.ends_with(".desktop") {
@@ -1219,6 +1281,22 @@ fn safe_link(uri: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// A `file://` link to this machine: its host and its path as written
+/// (percent-encoded). The host is empty, localhost, or this machine's name,
+/// which ls --hyperlink and other programs put in.
+fn file_link(uri: &str) -> Option<(&str, &str)> {
+    let rest = uri.get(..7).filter(|s| s.eq_ignore_ascii_case("file://")).map(|_| &uri[7..])?;
+    let (host, path) = rest.split_at(rest.find('/')?);
+    let local = host.is_empty() || host.eq_ignore_ascii_case("localhost") || host.eq_ignore_ascii_case(hostname());
+    local.then_some((host, path))
+}
+
+/// This machine's name.
+fn hostname() -> &'static str {
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default().trim().to_string())
 }
 
 /// GNOME's cursor blink setting (Accessibility > Typing).
@@ -1261,11 +1339,17 @@ mod tests {
             ("file:///usr/bin/ls", false),
             ("file:///usr/share/applications/org.gnome.Settings.desktop", false),
             ("file://otherhost/etc/hostname", false),
+            ("file://localhost/etc/hostname", true),
+            ("file:///etc/host%6Eame", true),
             ("javascript:alert(1)", false),
             ("ssh://host", false),
         ];
         for (uri, want) in cases {
             assert_eq!(safe_link(uri), want, "{uri}");
         }
+        // ls --hyperlink names this machine.
+        let ls_link = format!("file://{}/etc/hostname", hostname());
+        assert!(safe_link(&ls_link), "{ls_link}");
+        assert_eq!(file_link(&ls_link), Some((hostname(), "/etc/hostname")));
     }
 }
